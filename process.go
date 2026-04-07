@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sync"
 )
 
 func runProcess(ctx context.Context, task Task, env []string) {
@@ -39,8 +40,19 @@ func runProcess(ctx context.Context, task Task, env []string) {
 		return
 	}
 
-	go prefixLogger(task.Name, stdout, os.Stdout)
-	go prefixLogger(task.Name, stderr, os.Stderr)
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		prefixLogger(task.Name, stdout, os.Stdout)
+	}()
+	go func() {
+		defer wg.Done()
+		prefixLogger(task.Name, stderr, os.Stderr)
+	}()
+
+	wg.Wait()
 
 	if err := cmd.Wait(); err != nil {
 		if ctx.Err() != context.Canceled {

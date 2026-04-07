@@ -50,8 +50,8 @@ func runExec(taskQuery string, cmdArgs []string) {
 		cleanQuery := strings.TrimPrefix(taskQuery, "./")
 
 	outer:
-		for _, tasks := range config.Scripts {
-			for _, task := range tasks {
+		for _, scriptGroup := range config.Scripts {
+			for _, task := range scriptGroup.Tasks {
 				actualDir := task.Dir
 				if mappedDir, exists := config.Directories[task.Dir]; exists {
 					actualDir = mappedDir.Path

@@ -12,7 +12,6 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// runScript executes the tasks for the specified script name
 func runScript(targetScript string) {
 	_ = godotenv.Load()
 
@@ -30,7 +29,7 @@ func runScript(targetScript string) {
 		os.Exit(1)
 	}
 
-	tasks, exists := config.Scripts[targetScript]
+	scriptGroup, exists := config.Scripts[targetScript]
 	if !exists {
 		fmt.Printf("Error: Script '%s' is not defined.\n", targetScript)
 		os.Exit(1)
@@ -48,25 +47,41 @@ func runScript(targetScript string) {
 	}()
 
 	sharedEnv := os.Environ()
-	var wg sync.WaitGroup
-
-	fmt.Printf("[bnm] Starting script '%s'...\n", targetScript)
-	for _, task := range tasks {
-		t := task
-
-		t.Name = t.Dir
-
-		if resolvedDir, exists := config.Directories[t.Dir]; exists {
-			t.Dir = resolvedDir.Path
-		}
-
-		wg.Add(1)
-		go func(t Task) {
-			defer wg.Done()
-			runProcess(ctx, t, sharedEnv)
-		}(t)
+	mode := scriptGroup.Mode
+	if mode == "" {
+		mode = "parallel"
 	}
 
-	wg.Wait()
+	fmt.Printf("[bnm] Starting script '%s' (Mode: %s)...\n", targetScript, mode)
+	if mode == "sequential" {
+		for _, task := range scriptGroup.Tasks {
+			t := task
+			t.Name = t.Dir
+			if resolvedDir, exists := config.Directories[t.Dir]; exists {
+				t.Dir = resolvedDir.Path
+			}
+			runProcess(ctx, t, sharedEnv)
+			if ctx.Err() != nil {
+				break
+			}
+		}
+	} else {
+		var wg sync.WaitGroup
+		for _, task := range scriptGroup.Tasks {
+			t := task
+			t.Name = t.Dir
+			if resolvedDir, exists := config.Directories[t.Dir]; exists {
+				t.Dir = resolvedDir.Path
+			}
+
+			wg.Add(1)
+			go func(t Task) {
+				defer wg.Done()
+				runProcess(ctx, t, sharedEnv)
+			}(t)
+		}
+		wg.Wait()
+	}
+
 	fmt.Println("[bnm] All tasks have finished.")
 }

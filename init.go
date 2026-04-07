@@ -17,20 +17,36 @@ func initProject() {
 		defaultJSON :=
 			`{
   "directories": {
-    "BACK": { "alias": "B", "path": "./backend" },
-    "FRONT": { "alias": "F", "path": "./frontend" }
+    "FRONT": { "alias": "F", "path": "./frontend" },
+    "BACK": { "alias": "B", "path": "./backend" }
   },
   "scripts": {
-    "dev": [
-      {
-        "dir": "BACK",
-        "command": "echo 'Put your backend command here'"
-      },
-      {
-        "dir": "FRONT",
-        "command": "echo 'Put your frontend command here'"
-      }
-    ]
+    "dev": {
+      "mode": "parallel",
+      "tasks": [
+        {
+          "dir": "FRONT",
+          "command": "echo 'Put your frontend command here'"
+        },
+        {
+          "dir": "BACK",
+          "command": "echo 'Put your backend command here'"
+        }
+      ]
+    },
+    "build": {
+      "mode": "sequential",
+      "tasks": [
+        {
+          "dir": "FRONT",
+          "command": "echo 'Put your frontend build command here'"
+        },
+        {
+          "dir": "BACK",
+          "command": "echo 'Put your backend build command here'"
+        }
+      ]
+    }
   }
 }`
 		if err := os.WriteFile(jsonFile, []byte(defaultJSON), 0644); err != nil {
