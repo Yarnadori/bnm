@@ -15,16 +15,18 @@ func initProject() {
 		fmt.Printf("%s already exists, skipping creation.\n", jsonFile)
 	} else {
 		defaultJSON :=
-`{
+			`{
   "scripts": {
     "dev": [
       {
         "name": "BACKEND",
+        "alias": "B",
         "dir": "./backend",
         "command": "echo 'Put your backend command here'"
       },
       {
         "name": "FRONTEND",
+        "alias": "F",
         "dir": "./frontend",
         "command": "echo 'Put your frontend command here'"
       }
