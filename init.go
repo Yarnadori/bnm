@@ -26,11 +26,15 @@ func initProject() {
       "tasks": [
         {
           "dir": "FRONT",
-          "command": "echo 'Put your frontend command here'"
+          "command": "echo 'Put your frontend build command here'"
         },
         {
           "dir": "BACK",
-          "command": "echo 'Put your backend command here'"
+          "command": {
+            "windows": "echo 'Running on Windows'",
+            "mac": "echo 'Running on macOS'",
+            "linux": "echo 'Running on Linux'"
+          }
         }
       ]
     },

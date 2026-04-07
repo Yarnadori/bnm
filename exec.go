@@ -93,7 +93,7 @@ func runExec(taskQuery string, cmdArgs []string) {
 	task := Task{
 		Name:    resolvedTaskName,
 		Dir:     targetDir,
-		Command: commandStr,
+		Command: Command(commandStr),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -1,5 +1,10 @@
 package main
 
+import (
+	"encoding/json"
+	"runtime"
+)
+
 type Config struct {
 	Directories map[string]Directory   `json:"directories,omitempty"`
 	Scripts     map[string]ScriptGroup `json:"scripts"`
@@ -16,7 +21,38 @@ type Directory struct {
 }
 
 type Task struct {
-	Name    string `json:"-"`
-	Dir     string `json:"dir"`
-	Command string `json:"command"`
+	Name    string  `json:"-"`
+	Dir     string  `json:"dir"`
+	Command Command `json:"command"`
+}
+
+type Command string
+
+func (c *Command) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*c = Command(s)
+		return nil
+	}
+
+	var m map[string]string
+	if err := json.Unmarshal(data, &m); err == nil {
+		osName := runtime.GOOS
+		if cmd, ok := m[osName]; ok {
+			*c = Command(cmd)
+		} else if osName == "darwin" && m["mac"] != "" {
+			*c = Command(m["mac"])
+		} else if m["default"] != "" {
+			*c = Command(m["default"])
+		} else {
+			*c = ""
+		}
+		return nil
+	}
+
+	return nil
+}
+
+func (c Command) String() string {
+	return string(c)
 }

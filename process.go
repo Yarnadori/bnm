@@ -13,10 +13,12 @@ import (
 
 func runProcess(ctx context.Context, task Task, env []string) {
 	var cmd *exec.Cmd
+	cmdStr := task.Command.String()
+
 	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd", "/C", task.Command)
+		cmd = exec.CommandContext(ctx, "cmd", "/C", cmdStr)
 	} else {
-		cmd = exec.CommandContext(ctx, "sh", "-c", task.Command)
+		cmd = exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	}
 
 	if task.Dir != "" {
