@@ -1,12 +1,17 @@
 package main
 
 type Config struct {
-	Scripts map[string][]Task `json:"scripts"`
+	Directories map[string]Directory `json:"directories,omitempty"`
+	Scripts     map[string][]Task    `json:"scripts"`
+}
+
+type Directory struct {
+	Alias string `json:"alias"`
+	Path  string `json:"path"`
 }
 
 type Task struct {
-	Name    string `json:"name"`
-	Alias   string `json:"alias,omitempty"`
+	Name    string `json:"-"`
 	Dir     string `json:"dir"`
 	Command string `json:"command"`
 }

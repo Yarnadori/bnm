@@ -16,18 +16,18 @@ func initProject() {
 	} else {
 		defaultJSON :=
 			`{
+  "directories": {
+    "BACK": { "alias": "B", "path": "./backend" },
+    "FRONT": { "alias": "F", "path": "./frontend" }
+  },
   "scripts": {
     "dev": [
       {
-        "name": "BACKEND",
-        "alias": "B",
-        "dir": "./backend",
+        "dir": "BACK",
         "command": "echo 'Put your backend command here'"
       },
       {
-        "name": "FRONTEND",
-        "alias": "F",
-        "dir": "./frontend",
+        "dir": "FRONT",
         "command": "echo 'Put your frontend command here'"
       }
     ]

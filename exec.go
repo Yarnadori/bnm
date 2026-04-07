@@ -36,26 +36,44 @@ func runExec(taskQuery string, cmdArgs []string) {
 
 	isShorthand := strings.HasPrefix(taskQuery, "-")
 
-outer:
-	for _, tasks := range config.Scripts {
-		for _, task := range tasks {
-			if isShorthand {
-				searchStr := strings.TrimPrefix(taskQuery, "-")
-				if task.Alias != "" && strings.EqualFold(task.Alias, searchStr) {
-					targetDir = task.Dir
-					resolvedTaskName = task.Name
+	if isShorthand {
+		searchStr := strings.TrimPrefix(taskQuery, "-")
+		for key, dir := range config.Directories {
+			if strings.EqualFold(dir.Alias, searchStr) {
+				targetDir = dir.Path
+				resolvedTaskName = key
+				found = true
+				break
+			}
+		}
+	} else {
+		cleanQuery := strings.TrimPrefix(taskQuery, "./")
+
+	outer:
+		for _, tasks := range config.Scripts {
+			for _, task := range tasks {
+				actualDir := task.Dir
+				if mappedDir, exists := config.Directories[task.Dir]; exists {
+					actualDir = mappedDir.Path
+				}
+
+				cleanDir := strings.TrimPrefix(actualDir, "./")
+				if strings.EqualFold(cleanDir, cleanQuery) {
+					targetDir = actualDir
+					resolvedTaskName = task.Dir
 					found = true
 					break outer
 				}
-			} else {
-				cleanDir := strings.TrimPrefix(task.Dir, "./")
-				cleanQuery := strings.TrimPrefix(taskQuery, "./")
-
+			}
+		}
+		if !found {
+			for key, dir := range config.Directories {
+				cleanDir := strings.TrimPrefix(dir.Path, "./")
 				if strings.EqualFold(cleanDir, cleanQuery) {
-					targetDir = task.Dir
-					resolvedTaskName = task.Name
+					targetDir = dir.Path
+					resolvedTaskName = key
 					found = true
-					break outer
+					break
 				}
 			}
 		}
@@ -63,9 +81,9 @@ outer:
 
 	if !found {
 		if isShorthand {
-			fmt.Printf("Error: Task with alias '%s' not found in bnm.json.\n", strings.TrimPrefix(taskQuery, "-"))
+			fmt.Printf("Error: Directory alias '%s' not found in bnm.json.\n", strings.TrimPrefix(taskQuery, "-"))
 		} else {
-			fmt.Printf("Error: Task with directory '%s' not found in bnm.json.\n", taskQuery)
+			fmt.Printf("Error: Directory '%s' not found in bnm.json.\n", taskQuery)
 		}
 		os.Exit(1)
 	}
@@ -73,7 +91,7 @@ outer:
 	commandStr := strings.Join(cmdArgs, " ")
 
 	task := Task{
-		Name:    fmt.Sprintf("exec: %s", resolvedTaskName),
+		Name:    resolvedTaskName,
 		Dir:     targetDir,
 		Command: commandStr,
 	}
@@ -91,6 +109,6 @@ outer:
 
 	sharedEnv := os.Environ()
 
-	fmt.Printf("[bnm] Executing '%s' in directory '%s' (Task: %s)...\n", commandStr, targetDir, resolvedTaskName)
+	fmt.Printf("[bnm] Executing '%s' in directory '%s' (Target: %s)...\n", commandStr, targetDir, resolvedTaskName)
 	runProcess(ctx, task, sharedEnv)
 }

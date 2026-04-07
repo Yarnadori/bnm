@@ -52,11 +52,19 @@ func runScript(targetScript string) {
 
 	fmt.Printf("[bnm] Starting script '%s'...\n", targetScript)
 	for _, task := range tasks {
+		t := task
+
+		t.Name = t.Dir
+
+		if resolvedDir, exists := config.Directories[t.Dir]; exists {
+			t.Dir = resolvedDir.Path
+		}
+
 		wg.Add(1)
 		go func(t Task) {
 			defer wg.Done()
 			runProcess(ctx, t, sharedEnv)
-		}(task)
+		}(t)
 	}
 
 	wg.Wait()
