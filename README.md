@@ -40,6 +40,7 @@ Download the pre-built binary for your platform from the [Releases](https://gith
 | macOS (x64)           | `bnm-darwin-amd64`      |
 | macOS (Apple Silicon) | `bnm-darwin-arm64`      |
 | Windows (x64)         | `bnm-windows-amd64.exe` |
+| Windows (arm64)       | `bnm-windows-arm64.exe` |
 
 Move the binary to a directory in your `PATH` (e.g. `/usr/local/bin` on Linux/macOS).
 
@@ -264,6 +265,7 @@ go install github.com/Yarnadori/bnm@latest
 | macOS (x64)           | `bnm-darwin-amd64`      |
 | macOS (Apple Silicon) | `bnm-darwin-arm64`      |
 | Windows (x64)         | `bnm-windows-amd64.exe` |
+| Windows (arm64)       | `bnm-windows-arm64.exe` |
 
 ダウンロード後、バイナリを `PATH` の通ったディレクトリに移動してください（Linux/macOS では `/usr/local/bin` など）。
 

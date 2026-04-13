@@ -19,7 +19,14 @@ param(
 $ErrorActionPreference = "Stop"
 $Repo = "Yarnadori/bnm"
 $BinaryName = "bnm.exe"
-$AssetName = "bnm-windows-amd64.exe"
+
+# Detect architecture
+$arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+if ($arch -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
+    $AssetName = "bnm-windows-arm64.exe"
+} else {
+    $AssetName = "bnm-windows-amd64.exe"
+}
 
 # Determine version
 if (-not $Version) {
