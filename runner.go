@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/joho/godotenv"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
-
-	"github.com/joho/godotenv"
 )
 
 func runScript(targetScript string) {
@@ -53,13 +52,21 @@ func runScript(targetScript string) {
 	}
 
 	fmt.Printf("[bnm] Starting script '%s' (Mode: %s)...\n", targetScript, mode)
+	resolveName := func(t *Task) {
+		if resolvedDir, exists := config.Directories[t.Dir]; exists {
+			t.Name = t.Dir
+			t.Dir = resolvedDir.Path
+		} else if t.Dir == "." {
+			t.Name = "."
+		} else {
+			t.Name = t.Dir
+		}
+	}
+
 	if mode == "sequential" {
 		for _, task := range scriptGroup.Tasks {
 			t := task
-			t.Name = t.Dir
-			if resolvedDir, exists := config.Directories[t.Dir]; exists {
-				t.Dir = resolvedDir.Path
-			}
+			resolveName(&t)
 			runProcess(ctx, t, sharedEnv)
 			if ctx.Err() != nil {
 				break
@@ -69,10 +76,7 @@ func runScript(targetScript string) {
 		var wg sync.WaitGroup
 		for _, task := range scriptGroup.Tasks {
 			t := task
-			t.Name = t.Dir
-			if resolvedDir, exists := config.Directories[t.Dir]; exists {
-				t.Dir = resolvedDir.Path
-			}
+			resolveName(&t)
 
 			wg.Add(1)
 			go func(t Task) {

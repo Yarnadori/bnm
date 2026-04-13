@@ -34,6 +34,12 @@ func runExec(taskQuery string, cmdArgs []string) {
 	var resolvedTaskName string
 	found := false
 
+	if taskQuery == "." {
+		targetDir = "."
+		resolvedTaskName = "."
+		found = true
+	}
+
 	isShorthand := strings.HasPrefix(taskQuery, "-")
 
 	if isShorthand {

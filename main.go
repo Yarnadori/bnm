@@ -9,7 +9,7 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: bnm <command>")
 		fmt.Println("  init                      : Initialize (Creates bnm.json)")
-		fmt.Println("  exec <dir or alias> <cmd...> : Execute a command in target")
+		fmt.Println("  exec <dir or alias> <cmd...> : Execute a command in target (use '.' for current directory)")
 		fmt.Println("  <script>                  : Execute a script defined in bnm.json (e.g., dev)")
 		os.Exit(1)
 	}
