@@ -26,6 +26,8 @@ func runProcess(ctx context.Context, task Task, env []string) {
 	}
 	cmd.Env = env
 
+	fmt.Printf("[%s] $ %s\n", task.Name, cmdStr)
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		fmt.Printf("[%s] Error: Failed to get stdout: %v\n", task.Name, err)
