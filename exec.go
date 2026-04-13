@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/joho/godotenv"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
-
-	"github.com/joho/godotenv"
 )
 
 // runExec executes a specific command in the directory of a matching task
@@ -114,6 +113,12 @@ func runExec(taskQuery string, cmdArgs []string) {
 	}()
 
 	sharedEnv := os.Environ()
+	if config.Name != "" {
+		sharedEnv = append(sharedEnv, "PROJECT_NAME="+config.Name)
+	}
+	if config.Version != "" {
+		sharedEnv = append(sharedEnv, "PROJECT_VERSION="+config.Version)
+	}
 
 	fmt.Printf("[bnm] Executing '%s' in directory '%s' (Target: %s)...\n", commandStr, targetDir, resolvedTaskName)
 	runProcess(ctx, task, sharedEnv)

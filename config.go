@@ -6,6 +6,8 @@ import (
 )
 
 type Config struct {
+	Name        string                 `json:"name,omitempty"`
+	Version     string                 `json:"version,omitempty"`
 	Directories map[string]Directory   `json:"directories,omitempty"`
 	Scripts     map[string]ScriptGroup `json:"scripts"`
 }

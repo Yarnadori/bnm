@@ -46,6 +46,12 @@ func runScript(targetScript string) {
 	}()
 
 	sharedEnv := os.Environ()
+	if config.Name != "" {
+		sharedEnv = append(sharedEnv, "PROJECT_NAME="+config.Name)
+	}
+	if config.Version != "" {
+		sharedEnv = append(sharedEnv, "PROJECT_VERSION="+config.Version)
+	}
 	mode := scriptGroup.Mode
 	if mode == "" {
 		mode = "parallel"
