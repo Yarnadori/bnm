@@ -5,6 +5,8 @@ import (
 	"os"
 )
 
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: bnm <command>")
@@ -15,6 +17,12 @@ func main() {
 	}
 
 	command := os.Args[1]
+
+	// Handle the "version" command
+	if command == "version" || command == "--version" || command == "-v" {
+		fmt.Println("bnm", version)
+		return
+	}
 
 	// Handle the "init" command
 	if command == "init" {
