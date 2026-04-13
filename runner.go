@@ -59,7 +59,14 @@ func runScript(targetScript string) {
 
 	fmt.Printf("[bnm] Starting script '%s' (Mode: %s)...\n", targetScript, mode)
 	resolveName := func(t *Task) {
-		if resolvedDir, exists := config.Directories[t.Dir]; exists {
+		if t.Dir == "" {
+			t.Dir = "."
+			if config.Name != "" {
+				t.Name = config.Name
+			} else {
+				t.Name = "."
+			}
+		} else if resolvedDir, exists := config.Directories[t.Dir]; exists {
 			t.Name = t.Dir
 			t.Dir = resolvedDir.Path
 		} else if t.Dir == "." {

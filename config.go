@@ -24,7 +24,7 @@ type Directory struct {
 
 type Task struct {
 	Name    string  `json:"-"`
-	Dir     string  `json:"dir"`
+	Dir     string  `json:"dir,omitempty"`
 	Command Command `json:"command"`
 }
 
