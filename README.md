@@ -152,9 +152,6 @@ bnm exec FRONTEND npm install
 
 # By path
 bnm exec ./frontend npm install
-
-# In current directory
-bnm exec . npm install
 ```
 
 ---
@@ -246,12 +243,6 @@ curl -fsSL https://raw.githubusercontent.com/Yarnadori/bnm/main/install.sh | bas
 
 ```powershell
 irm https://raw.githubusercontent.com/Yarnadori/bnm/main/install.ps1 | iex
-```
-
-### Go ユーザー向け
-
-```bash
-go install github.com/Yarnadori/bnm@latest
 ```
 
 ### バイナリの手動ダウンロード
@@ -377,9 +368,6 @@ bnm exec FRONTEND npm install
 
 # パス指定
 bnm exec ./frontend npm install
-
-# カレントディレクトリ
-bnm exec . npm install
 ```
 
 ---

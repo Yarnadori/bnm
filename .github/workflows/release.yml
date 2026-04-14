@@ -64,11 +64,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+
+      - name: Create source archives
+        run: |
+          git archive --format=tar.gz --prefix=bnm-${{ github.ref_name }}/ HEAD -o dist/bnm-${{ github.ref_name }}.tar.gz
+          git archive --format=zip    --prefix=bnm-${{ github.ref_name }}/ HEAD -o dist/bnm-${{ github.ref_name }}.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
