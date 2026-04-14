@@ -79,7 +79,7 @@ jobs:
           git archive --format=zip    --prefix=bnm-${{ github.ref_name }}/ HEAD -o dist/bnm-${{ github.ref_name }}.zip
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
