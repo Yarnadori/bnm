@@ -10,6 +10,7 @@ bnm は、モノレポやフルスタックアプリケーションなど、複�
 ## 特徴
 
 - サブディレクトリを自動検出してプロジェクトを**初期化**
+- プロジェクトフォルダの追加・削除に合わせて `bnm.json` のディレクトリ定義を**同期**
 - `bnm.json` で定義したスクリプトを**並列・直列**で実行
 - エイリアスやパスで任意のディレクトリに**コマンドを実行**
 - **クロスプラットフォーム**対応（Windows / macOS / Linux）
@@ -133,6 +134,10 @@ bnm build  # "build" タスクを直列実行
 
 カレントディレクトリに `bnm.json` を作成してプロジェクトを初期化します。サブディレクトリが自動的にスキャンされます（`.git` などの隠しディレクトリは除外）。
 
+### `bnm sync`
+
+現在のサブディレクトリに合わせて、`bnm.json` の `directories` を更新します。変更のないディレクトリは既存のエイリアスを維持し、新しいディレクトリにはエイリアスを自動生成し、削除されたディレクトリは `directories` から削除します。
+
 ### `bnm <スクリプト名>`
 
 `bnm.json` で定義したスクリプトを実行します。
@@ -214,3 +219,11 @@ bnm はプロジェクトルートの `.env` を自動で読み込み、以下�
 | `PROJECT_VERSION` | `bnm.json` の `version` |
 
 ---
+
+## コミュニティ
+
+- [Contributing](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+- [Support](SUPPORT.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [License](LICENSE)

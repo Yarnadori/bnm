@@ -20,6 +20,7 @@ func main() {
 	if command == "help" || command == "--help" || command == "-h" {
 		fmt.Println("Usage: bnm <command>")
 		fmt.Println("  init                      : Initialize (Creates bnm.json)")
+		fmt.Println("  sync                      : Sync directories in bnm.json with current subdirectories")
 		fmt.Println("  exec <dir or alias> <cmd...> : Execute a command in target (use '.' for current directory)")
 		fmt.Println("  <script>                  : Execute a script defined in bnm.json (e.g., dev)")
 		return
@@ -34,6 +35,12 @@ func main() {
 	// Handle the "init" command
 	if command == "init" {
 		initProject()
+		return
+	}
+
+	// Handle the "sync" command
+	if command == "sync" {
+		syncProject()
 		return
 	}
 

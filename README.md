@@ -10,6 +10,7 @@ bnm is a task runner designed to streamline command execution and script managem
 ## Features
 
 - **Initialize** a project with auto-detected subdirectories
+- **Sync directories** in `bnm.json` when project folders are added or removed
 - **Run scripts** defined in `bnm.json` in parallel or sequential mode
 - **Execute arbitrary commands** in any configured directory via alias or path
 - **Cross-platform** command support (Windows / macOS / Linux)
@@ -133,6 +134,10 @@ bnm build  # runs all "build" tasks sequentially
 
 Initializes the project by creating `bnm.json` in the current directory. Subdirectories are scanned automatically. Hidden directories (`.git`, etc.) are excluded.
 
+### `bnm sync`
+
+Updates the `directories` section in `bnm.json` to match the current subdirectories. Existing aliases are kept for unchanged directories, new directories get generated aliases, and removed directories are deleted from `directories`.
+
 ### `bnm <script>`
 
 Runs a script defined in `bnm.json`.
@@ -214,3 +219,11 @@ bnm automatically loads `.env` from the project root and passes the following va
 | `PROJECT_VERSION` | `version` field in `bnm.json` |
 
 ---
+
+## Community
+
+- [Contributing](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+- [Support](SUPPORT.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [License](LICENSE)
