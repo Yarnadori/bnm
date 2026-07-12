@@ -43,6 +43,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          check-latest: true
 
       - name: Build
         env:
@@ -77,6 +78,12 @@ jobs:
         run: |
           git archive --format=tar.gz --prefix=bnm-${{ github.ref_name }}/ HEAD -o dist/bnm-${{ github.ref_name }}.tar.gz
           git archive --format=zip    --prefix=bnm-${{ github.ref_name }}/ HEAD -o dist/bnm-${{ github.ref_name }}.zip
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3

@@ -62,8 +62,19 @@ func initProject() {
 			fmt.Printf("Failed to read directory: %v\n", err)
 			os.Exit(1)
 		}
+		// Dependency and build-output directories that are never task targets
+		skipDirs := map[string]bool{
+			"node_modules": true,
+			"vendor":       true,
+			"dist":         true,
+			"build":        true,
+			"out":          true,
+			"target":       true,
+			"__pycache__":  true,
+		}
+
 		for _, entry := range entries {
-			if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || skipDirs[entry.Name()] {
 				continue
 			}
 			name := entry.Name()

@@ -54,6 +54,27 @@ if (-not (Test-Path $InstallDir)) {
 # Download binary
 Invoke-WebRequest -Uri $DownloadUrl -OutFile $Destination -UseBasicParsing
 
+# Verify SHA-256 checksum (checksums.txt is published alongside each release)
+$ChecksumsUrl = "https://github.com/$Repo/releases/download/$Version/checksums.txt"
+try {
+    $checksums = (Invoke-WebRequest -Uri $ChecksumsUrl -UseBasicParsing).Content
+    $expectedLine = $checksums -split "`n" | Where-Object { $_ -match [regex]::Escape($AssetName) }
+    if ($expectedLine) {
+        $expected = ($expectedLine -split '\s+')[0].ToLower()
+        $actual = (Get-FileHash -Path $Destination -Algorithm SHA256).Hash.ToLower()
+        if ($expected -ne $actual) {
+            Remove-Item $Destination -Force
+            Write-Error "Checksum verification failed for $AssetName.`n  expected: $expected`n  actual:   $actual"
+            exit 1
+        }
+        Write-Host "Checksum verified."
+    } else {
+        Write-Warning "No checksum entry found for $AssetName; skipping verification."
+    }
+} catch {
+    Write-Warning "checksums.txt not found for $Version; skipping verification."
+}
+
 Write-Host "bnm $Version installed to $Destination"
 
 # Add to PATH for current user if not already present

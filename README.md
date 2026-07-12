@@ -1,5 +1,9 @@
 # bnm
 
+[![CI](https://github.com/Yarnadori/bnm/actions/workflows/ci.yml/badge.svg)](https://github.com/Yarnadori/bnm/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Yarnadori/bnm)](https://github.com/Yarnadori/bnm/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 bnm is a task runner designed to streamline command execution and script management in projects with multiple directories, such as monorepos or full-stack applications.
 
 ---
@@ -9,9 +13,12 @@ bnm is a task runner designed to streamline command execution and script managem
 - **Initialize** a project with auto-detected subdirectories
 - **Run scripts** defined in `bnm.json` in parallel or sequential mode
 - **Execute arbitrary commands** in any configured directory via alias or path
+- **List** configured directories and scripts with `bnm list`
 - **Cross-platform** command support (Windows / macOS / Linux)
 - **Environment variables** — loads `.env` automatically and exposes `PROJECT_NAME` / `PROJECT_VERSION`
-- **Prefixed output** — each process output is labeled with its directory name
+- **Prefixed, color-coded output** — each process output is labeled with its directory name
+- **CI-friendly** — non-zero exit code on failure; sequential scripts stop at the first failing task
+- **Clean shutdown** — Ctrl+C terminates the whole process tree of every task
 
 ---
 
@@ -28,6 +35,8 @@ curl -fsSL https://raw.githubusercontent.com/Yarnadori/bnm/main/install.sh | bas
 ```powershell
 irm https://raw.githubusercontent.com/Yarnadori/bnm/main/install.ps1 | iex
 ```
+
+Both install scripts verify the SHA-256 checksum of the downloaded binary against the `checksums.txt` published with each release.
 
 ### Manual download
 
@@ -128,7 +137,25 @@ bnm build  # runs all "build" tasks sequentially
 
 ### `bnm init`
 
-Initializes the project by creating `bnm.json` in the current directory. Subdirectories are scanned automatically. Hidden directories (`.git`, etc.) are excluded.
+Initializes the project by creating `bnm.json` in the current directory. Subdirectories are scanned automatically. Hidden directories (`.git`, etc.) and dependency/build directories (`node_modules`, `dist`, `build`, `vendor`, etc.) are excluded.
+
+### `bnm list`
+
+Shows the directories and scripts defined in `bnm.json`. Alias: `bnm ls`.
+
+```bash
+$ bnm list
+my-app v1.0.0
+
+Directories:
+  BACKEND      -B  ./backend
+  FRONTEND     -F  ./frontend
+
+Scripts:
+  dev (parallel)
+    FRONTEND     npm run dev
+    BACKEND      npm run dev
+```
 
 ### `bnm <script>`
 
@@ -138,6 +165,12 @@ Runs a script defined in `bnm.json`.
 bnm dev
 bnm build
 ```
+
+Exit code behavior:
+
+- In `sequential` mode, execution stops at the first failing task.
+- bnm exits with a non-zero code if any task fails, so scripts are safe to use in CI.
+- Note: script names that collide with built-in commands (`init`, `list`, `ls`, `exec`, `help`, `version`) cannot be invoked this way.
 
 ### `bnm exec <dir> <command...>`
 
@@ -210,6 +243,22 @@ bnm automatically loads `.env` from the project root and passes the following va
 | `PROJECT_NAME`    | `name` field in `bnm.json`    |
 | `PROJECT_VERSION` | `version` field in `bnm.json` |
 
+Set `NO_COLOR` to any value to disable colored output prefixes. Colors are also disabled automatically when output is not a terminal.
+
+---
+
+## Security
+
+`bnm.json` and `.env` define commands and environment for execution — treat them as code, just like `npm run` scripts or a `Makefile`. See [SECURITY.md](SECURITY.md) for the security policy and how to report vulnerabilities.
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines. This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+[MIT](LICENSE)
+
 ---
 
 ---
@@ -225,9 +274,12 @@ bnm は、モノレポやフルスタックアプリケーションなど、複�
 - サブディレクトリを自動検出してプロジェクトを**初期化**
 - `bnm.json` で定義したスクリプトを**並列・直列**で実行
 - エイリアスやパスで任意のディレクトリに**コマンドを実行**
+- `bnm list` でディレクトリ・スクリプト定義を**一覧表示**
 - **クロスプラットフォーム**対応（Windows / macOS / Linux）
 - `.env` を自動読み込みし、`PROJECT_NAME` / `PROJECT_VERSION` を**環境変数として提供**
-- 各プロセスの出力をディレクトリ名で**プレフィックス表示**
+- 各プロセスの出力をディレクトリ名で**色分けプレフィックス表示**
+- **CI フレンドリー** — タスク失敗時は非ゼロ終了コード、直列モードは最初の失敗で停止
+- **クリーンな終了** — Ctrl+C で各タスクのプロセスツリー全体を確実に終了
 
 ---
 
@@ -244,6 +296,8 @@ curl -fsSL https://raw.githubusercontent.com/Yarnadori/bnm/main/install.sh | bas
 ```powershell
 irm https://raw.githubusercontent.com/Yarnadori/bnm/main/install.ps1 | iex
 ```
+
+どちらのインストールスクリプトも、リリースに同梱される `checksums.txt` を使ってダウンロードしたバイナリの SHA-256 チェックサムを検証します。
 
 ### バイナリの手動ダウンロード
 
@@ -344,7 +398,25 @@ bnm build  # "build" タスクを直列実行
 
 ### bnm init（初期化コマンド）
 
-カレントディレクトリに `bnm.json` を作成してプロジェクトを初期化します。サブディレクトリが自動的にスキャンされます（`.git` などの隠しディレクトリは除外）。
+カレントディレクトリに `bnm.json` を作成してプロジェクトを初期化します。サブディレクトリが自動的にスキャンされます（`.git` などの隠しディレクトリと、`node_modules` / `dist` / `build` / `vendor` などの依存・ビルド成果物ディレクトリは除外）。
+
+### `bnm list`
+
+`bnm.json` で定義したディレクトリとスクリプトを一覧表示します。エイリアス: `bnm ls`
+
+```bash
+$ bnm list
+my-app v1.0.0
+
+Directories:
+  BACKEND      -B  ./backend
+  FRONTEND     -F  ./frontend
+
+Scripts:
+  dev (parallel)
+    FRONTEND     npm run dev
+    BACKEND      npm run dev
+```
 
 ### `bnm <スクリプト名>`
 
@@ -354,6 +426,12 @@ bnm build  # "build" タスクを直列実行
 bnm dev
 bnm build
 ```
+
+終了コードの挙動:
+
+- `sequential` モードでは、最初に失敗したタスクで実行を停止します。
+- いずれかのタスクが失敗した場合、bnm は非ゼロの終了コードで終了します（CI で安全に使えます）。
+- 注意: 組み込みコマンド（`init` / `list` / `ls` / `exec` / `help` / `version`）と同名のスクリプトはこの形式では実行できません。
 
 ### `bnm exec <ディレクトリ> <コマンド...>`
 
@@ -425,5 +503,21 @@ bnm はプロジェクトルートの `.env` を自動で読み込み、以下�
 | ----------------- | ----------------------- |
 | `PROJECT_NAME`    | `bnm.json` の `name`    |
 | `PROJECT_VERSION` | `bnm.json` の `version` |
+
+環境変数 `NO_COLOR` を設定すると、プレフィックスの色分けを無効にできます。出力先がターミナルでない場合は自動的に無効になります。
+
+---
+
+## セキュリティ
+
+`bnm.json` と `.env` は実行するコマンドと環境を定義するファイルです。`npm run` のスクリプトや `Makefile` と同様に、コードとして扱ってください。セキュリティポリシーと脆弱性の報告方法は [SECURITY.md](SECURITY.md) を参照してください。
+
+## コントリビュート
+
+コントリビューションを歓迎します！開発環境のセットアップとガイドラインは [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。本プロジェクトは [Contributor Covenant 行動規範](CODE_OF_CONDUCT.md) に従います。
+
+## ライセンス
+
+[MIT](LICENSE)
 
 ---

@@ -2,8 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
 	"runtime"
 )
+
+const configFileName = "bnm.json"
 
 type Config struct {
 	Name        string                 `json:"name,omitempty"`
@@ -57,4 +61,35 @@ func (c *Command) UnmarshalJSON(data []byte) error {
 
 func (c Command) String() string {
 	return string(c)
+}
+
+// loadConfig reads and parses bnm.json in the current directory
+func loadConfig() (*Config, error) {
+	data, err := os.ReadFile(configFileName)
+	if err != nil {
+		return nil, fmt.Errorf("%s not found. Please initialize the project with 'bnm init'", configFileName)
+	}
+
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", configFileName, err)
+	}
+
+	for name, group := range config.Scripts {
+		if group.Mode != "" && group.Mode != "parallel" && group.Mode != "sequential" {
+			return nil, fmt.Errorf("script '%s' has unknown mode '%s' (expected \"parallel\" or \"sequential\")", name, group.Mode)
+		}
+	}
+
+	return &config, nil
+}
+
+// mustLoadConfig loads bnm.json or exits with an error message
+func mustLoadConfig() *Config {
+	config, err := loadConfig()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	return config
 }

@@ -7,6 +7,18 @@ import (
 
 var version = "dev"
 
+func printUsage() {
+	fmt.Println("Usage: bnm <command>")
+	fmt.Println("  init                         : Initialize (Creates bnm.json)")
+	fmt.Println("  list                         : List directories and scripts defined in bnm.json")
+	fmt.Println("  exec <dir or alias> <cmd...> : Execute a command in target (use '.' for current directory)")
+	fmt.Println("  <script>                     : Execute a script defined in bnm.json (e.g., dev)")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  -h, --help      Show this help")
+	fmt.Println("  -v, --version   Show version")
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: bnm <command>")
@@ -16,29 +28,20 @@ func main() {
 
 	command := os.Args[1]
 
-	// Handle the "help" command
-	if command == "help" || command == "--help" || command == "-h" {
-		fmt.Println("Usage: bnm <command>")
-		fmt.Println("  init                      : Initialize (Creates bnm.json)")
-		fmt.Println("  exec <dir or alias> <cmd...> : Execute a command in target (use '.' for current directory)")
-		fmt.Println("  <script>                  : Execute a script defined in bnm.json (e.g., dev)")
-		return
-	}
+	switch command {
+	case "help", "--help", "-h":
+		printUsage()
 
-	// Handle the "version" command
-	if command == "version" || command == "--version" || command == "-v" {
+	case "version", "--version", "-v":
 		fmt.Println("bnm", version)
-		return
-	}
 
-	// Handle the "init" command
-	if command == "init" {
+	case "init":
 		initProject()
-		return
-	}
 
-	// Handle the "exec" command
-	if command == "exec" {
+	case "list", "ls":
+		runList()
+
+	case "exec":
 		if len(os.Args) < 4 {
 			fmt.Println("Usage: bnm exec <dir or alias> <command...>")
 			fmt.Println("Example: bnm exec -B pnpm add something")
@@ -47,9 +50,9 @@ func main() {
 		taskName := os.Args[2]
 		cmdArgs := os.Args[3:]
 		runExec(taskName, cmdArgs)
-		return
-	}
 
-	// Otherwise, treat it as a script execution
-	runScript(command)
+	default:
+		// Otherwise, treat it as a script execution
+		runScript(command)
+	}
 }

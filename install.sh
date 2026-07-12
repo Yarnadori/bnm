@@ -49,9 +49,34 @@ echo "Installing bnm $VERSION ($GOOS/$GOARCH)..."
 echo "Downloading from: $DOWNLOAD_URL"
 
 TMP_FILE="$(mktemp)"
-trap 'rm -f "$TMP_FILE"' EXIT
+TMP_CHECKSUMS="$(mktemp)"
+trap 'rm -f "$TMP_FILE" "$TMP_CHECKSUMS"' EXIT
 
 curl -fsSL "$DOWNLOAD_URL" -o "$TMP_FILE"
+
+# Verify SHA-256 checksum (checksums.txt is published alongside each release)
+CHECKSUMS_URL="https://github.com/$REPO/releases/download/$VERSION/checksums.txt"
+if curl -fsSL "$CHECKSUMS_URL" -o "$TMP_CHECKSUMS" 2>/dev/null; then
+  EXPECTED="$(grep "  ${ASSET_NAME}\$" "$TMP_CHECKSUMS" | awk '{print $1}')"
+  if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL="$(sha256sum "$TMP_FILE" | awk '{print $1}')"
+  else
+    ACTUAL="$(shasum -a 256 "$TMP_FILE" | awk '{print $1}')"
+  fi
+  if [ -z "$EXPECTED" ]; then
+    echo "Warning: no checksum entry found for $ASSET_NAME; skipping verification."
+  elif [ "$EXPECTED" != "$ACTUAL" ]; then
+    echo "Error: checksum verification failed for $ASSET_NAME."
+    echo "  expected: $EXPECTED"
+    echo "  actual:   $ACTUAL"
+    exit 1
+  else
+    echo "Checksum verified."
+  fi
+else
+  echo "Warning: checksums.txt not found for $VERSION; skipping verification."
+fi
+
 chmod +x "$TMP_FILE"
 
 # Install (may require sudo)
