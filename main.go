@@ -13,7 +13,13 @@ func printUsage() {
 	fmt.Println("  sync                         : Sync directories in bnm.json with current subdirectories")
 	fmt.Println("  list                         : List directories and scripts defined in bnm.json")
 	fmt.Println("  exec <dir or alias> <cmd...> : Execute a command in target (use '.' for current directory)")
-	fmt.Println("  <script>                     : Execute a script defined in bnm.json (e.g., dev)")
+	fmt.Println("  exec --all <cmd...>          : Execute a command in every configured directory")
+	fmt.Println("  completion <bash|zsh|fish>   : Print a shell completion script")
+	fmt.Println("  <script> [dir...] [-- args]  : Execute a script defined in bnm.json (e.g., dev)")
+	fmt.Println()
+	fmt.Println("Script options:")
+	fmt.Println("  <script> -F FRONTEND         : Run only tasks in the given directories (alias, key, or path)")
+	fmt.Println("  <script> -- --port 3000      : Pass extra arguments to every task command")
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  -h, --help      Show this help")
@@ -46,8 +52,13 @@ func main() {
 		runList()
 
 	case "exec":
+		if len(os.Args) >= 4 && os.Args[2] == "--all" {
+			runExecAll(os.Args[3:])
+			return
+		}
 		if len(os.Args) < 4 {
 			fmt.Println("Usage: bnm exec <dir or alias> <command...>")
+			fmt.Println("       bnm exec --all <command...>")
 			fmt.Println("Example: bnm exec -B pnpm add something")
 			os.Exit(1)
 		}
@@ -55,8 +66,35 @@ func main() {
 		cmdArgs := os.Args[3:]
 		runExec(taskName, cmdArgs)
 
+	case "completion":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: bnm completion <bash|zsh|fish>")
+			os.Exit(1)
+		}
+		printCompletion(os.Args[2])
+
+	case "__complete":
+		what := ""
+		if len(os.Args) > 2 {
+			what = os.Args[2]
+		}
+		runComplete(what)
+
 	default:
 		// Otherwise, treat it as a script execution
-		runScript(command)
+		filters, extraArgs := splitScriptArgs(os.Args[2:])
+		runScript(command, filters, extraArgs)
 	}
+}
+
+// splitScriptArgs separates directory filters from pass-through arguments:
+// everything before "--" filters tasks by directory, everything after is
+// appended to each task command.
+func splitScriptArgs(args []string) (filters []string, extraArgs []string) {
+	for i, a := range args {
+		if a == "--" {
+			return args[:i], args[i+1:]
+		}
+	}
+	return args, nil
 }

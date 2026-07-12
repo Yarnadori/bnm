@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/joho/godotenv"
@@ -75,8 +76,20 @@ func runExec(taskQuery string, cmdArgs []string) {
 	if !found {
 		if isShorthand {
 			fmt.Printf("Error: Directory alias '%s' not found in bnm.json.\n", strings.TrimPrefix(taskQuery, "-"))
+			aliases := make([]string, 0, len(config.Directories))
+			for _, key := range sortedKeys(config.Directories) {
+				if alias := config.Directories[key].Alias; alias != "" {
+					aliases = append(aliases, "-"+alias)
+				}
+			}
+			if len(aliases) > 0 {
+				fmt.Printf("Available aliases: %s\n", strings.Join(aliases, ", "))
+			}
 		} else {
 			fmt.Printf("Error: Directory '%s' not found in bnm.json.\n", taskQuery)
+			if s := closestMatch(taskQuery, sortedKeys(config.Directories)); s != "" {
+				fmt.Printf("Did you mean '%s'?\n", s)
+			}
 		}
 		os.Exit(1)
 	}
@@ -103,7 +116,62 @@ func runExec(taskQuery string, cmdArgs []string) {
 	sharedEnv := buildEnv(config)
 
 	fmt.Printf("[bnm] Executing '%s' in directory '%s' (Target: %s)...\n", commandStr, targetDir, resolvedTaskName)
-	if err := runProcess(ctx, task, sharedEnv); err != nil {
+	if err := runProcess(ctx, task, taskEnv(sharedEnv, task)); err != nil {
 		os.Exit(exitCodeOf(err))
+	}
+}
+
+// runExecAll executes a command in every configured directory, sequentially
+// in sorted key order. Failures don't stop the remaining directories, but
+// any failure makes bnm exit non-zero.
+func runExecAll(cmdArgs []string) {
+	_ = godotenv.Load()
+
+	config := mustLoadConfig()
+
+	if len(config.Directories) == 0 {
+		fmt.Println("Error: No directories are configured in bnm.json.")
+		os.Exit(1)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var interrupted atomic.Bool
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		interrupted.Store(true)
+		fmt.Println("\n[bnm] Received termination signal. Stopping process...")
+		cancel()
+	}()
+
+	sharedEnv := buildEnv(config)
+	commandStr := strings.Join(cmdArgs, " ")
+
+	fmt.Printf("[bnm] Executing '%s' in all directories...\n", commandStr)
+
+	var failedDirs []string
+	for _, key := range sortedKeys(config.Directories) {
+		if ctx.Err() != nil {
+			break
+		}
+		task := Task{
+			Name:    key,
+			Dir:     config.Directories[key].Path,
+			Command: Command(commandStr),
+		}
+		if err := runProcess(ctx, task, taskEnv(sharedEnv, task)); err != nil && ctx.Err() == nil {
+			failedDirs = append(failedDirs, key)
+		}
+	}
+
+	if interrupted.Load() {
+		os.Exit(130)
+	}
+	if len(failedDirs) > 0 {
+		fmt.Printf("[bnm] Command failed in: %s\n", strings.Join(failedDirs, ", "))
+		os.Exit(1)
 	}
 }

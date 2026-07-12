@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // runList prints the directories and scripts defined in bnm.json
@@ -41,7 +42,14 @@ func runList() {
 			if mode == "" {
 				mode = "parallel"
 			}
-			fmt.Printf("  %s (%s)\n", name, mode)
+			attrs := mode
+			if group.MaxParallel > 0 {
+				attrs += fmt.Sprintf(", max %d", group.MaxParallel)
+			}
+			if len(group.DependsOn) > 0 {
+				attrs += ", depends on: " + strings.Join(group.DependsOn, ", ")
+			}
+			fmt.Printf("  %s (%s)\n", name, attrs)
 			for _, task := range group.Tasks {
 				dir := task.Dir
 				if dir == "" {

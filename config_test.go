@@ -103,3 +103,68 @@ func TestLoadConfigUnknownMode(t *testing.T) {
 		t.Error("expected error for unknown mode")
 	}
 }
+
+func TestLoadConfigNegativeMaxParallel(t *testing.T) {
+	writeConfig(t, `{"scripts": {"dev": {"maxParallel": -1, "tasks": []}}}`)
+	if _, err := loadConfig(); err == nil {
+		t.Error("expected error for negative maxParallel")
+	}
+}
+
+func TestLoadConfigUnknownDependency(t *testing.T) {
+	writeConfig(t, `{"scripts": {"dev": {"dependsOn": ["missing"], "tasks": []}}}`)
+	if _, err := loadConfig(); err == nil {
+		t.Error("expected error for unknown dependsOn reference")
+	}
+}
+
+func TestLoadConfigDependencyCycle(t *testing.T) {
+	writeConfig(t, `{"scripts": {
+		"a": {"dependsOn": ["b"], "tasks": []},
+		"b": {"dependsOn": ["a"], "tasks": []}
+	}}`)
+	if _, err := loadConfig(); err == nil {
+		t.Error("expected error for dependency cycle")
+	}
+}
+
+func TestLoadConfigSelfDependencyCycle(t *testing.T) {
+	writeConfig(t, `{"scripts": {"a": {"dependsOn": ["a"], "tasks": []}}}`)
+	if _, err := loadConfig(); err == nil {
+		t.Error("expected error for self dependency")
+	}
+}
+
+func TestLoadConfigValidDependencies(t *testing.T) {
+	writeConfig(t, `{"scripts": {
+		"build": {"tasks": []},
+		"deploy": {"dependsOn": ["build"], "maxParallel": 2, "tasks": [
+			{"command": "echo hi", "env": {"FOO": "bar"}}
+		]}
+	}}`)
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	deploy := config.Scripts["deploy"]
+	if deploy.MaxParallel != 2 {
+		t.Errorf("MaxParallel: got %d, want 2", deploy.MaxParallel)
+	}
+	if len(deploy.DependsOn) != 1 || deploy.DependsOn[0] != "build" {
+		t.Errorf("DependsOn: got %v", deploy.DependsOn)
+	}
+	if deploy.Tasks[0].Env["FOO"] != "bar" {
+		t.Errorf("Env: got %v", deploy.Tasks[0].Env)
+	}
+}
+
+func TestLoadConfigKeepsSchemaField(t *testing.T) {
+	writeConfig(t, `{"$schema": "https://example.com/schema.json", "scripts": {}}`)
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	if config.Schema != "https://example.com/schema.json" {
+		t.Errorf("Schema: got %q", config.Schema)
+	}
+}

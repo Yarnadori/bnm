@@ -16,11 +16,18 @@ bnm は、モノレポやフルスタックアプリケーションなど、複�
 - サブディレクトリを自動検出してプロジェクトを**初期化**
 - プロジェクトフォルダの追加・削除に合わせて `bnm.json` のディレクトリ定義を**同期**
 - `bnm.json` で定義したスクリプトを**並列・直列**で実行
-- エイリアスやパスで任意のディレクトリに**コマンドを実行**
+- **スクリプト依存関係** — `dependsOn` で前提スクリプトを先に実行（循環は検出してエラー）
+- **ディレクトリ絞り込み** — `bnm dev -F` で特定ディレクトリのタスクのみ実行
+- **引数パススルー** — `bnm dev -- --port 3000` で `--` 以降を各タスクコマンドに追加
+- **並列度制限** — `maxParallel` で同時実行タスク数を制御
+- エイリアスやパスで任意のディレクトリに**コマンドを実行**（`exec --all` で全ディレクトリ一括も可能）
 - `bnm list` でディレクトリ・スクリプト定義を**一覧表示**
 - **クロスプラットフォーム**対応（Windows / macOS / Linux）
-- `.env` を自動読み込みし、`PROJECT_NAME` / `PROJECT_VERSION` を**環境変数として提供**
+- `.env` を自動読み込み（プロジェクトルート＋各ディレクトリ）し、タスク単位の `env` にも対応。`PROJECT_NAME` / `PROJECT_VERSION` を**環境変数として提供**
 - 各プロセスの出力をディレクトリ名で**色分けプレフィックス表示**
+- **実行サマリー** — スクリプト実行後にタスクごとの成否と所要時間を表示
+- **シェル補完** — `bnm completion bash|zsh|fish`、typo 時の「Did you mean ...?」サジェスト付き
+- **エディタ対応** — `bnm.json` の [JSON Schema](schema/bnm.schema.json) を公開（`bnm init` が `$schema` を自動付与）
 - **CI フレンドリー** — タスク失敗時は非ゼロ終了コード、直列モードは最初の失敗で停止
 - **クリーンな終了** — Ctrl+C で各タスクのプロセスツリー全体を確実に終了
 
@@ -165,7 +172,7 @@ Scripts:
     BACKEND      npm run dev
 ```
 
-### `bnm <スクリプト名>`
+### `bnm <スクリプト名> [ディレクトリ...] [-- 引数...]`
 
 `bnm.json` で定義したスクリプトを実行します。
 
@@ -174,11 +181,31 @@ bnm dev
 bnm build
 ```
 
+**ディレクトリ絞り込み** — 特定ディレクトリのタスクのみ実行します（`-` 付きエイリアス、ディレクトリキー、パスのいずれでも指定可能）：
+
+```bash
+bnm dev -F                # FRONTEND のタスクのみ
+bnm dev FRONTEND BACKEND  # 複数指定
+bnm dev ./frontend        # パス指定。'.' はルートのタスクにマッチ
+```
+
+**引数パススルー** — `--` 以降はスクリプトの各タスクコマンドの末尾に追加されます（依存スクリプトには影響しません）：
+
+```bash
+bnm test -- --watch
+bnm dev -F -- --port 3000
+```
+
+スクリプトに `dependsOn` がある場合、それらのスクリプトが先に最後まで実行されます（[スクリプトグループ](#スクリプトグループ)参照）。
+
+実行後には、タスクごとの状態（`ok` / `failed` / `skipped` / `canceled`）と所要時間のサマリーが表示されます。
+
 終了コードの挙動:
 
 - `sequential` モードでは、最初に失敗したタスクで実行を停止します。
+- 依存スクリプトが失敗した場合、残りのスクリプトはスキップされます。
 - いずれかのタスクが失敗した場合、bnm は非ゼロの終了コードで終了します（CI で安全に使えます）。
-- 注意: 組み込みコマンド（`init` / `sync` / `list` / `ls` / `exec` / `help` / `version`）と同名のスクリプトはこの形式では実行できません。
+- 注意: 組み込みコマンド（`init` / `sync` / `list` / `ls` / `exec` / `completion` / `help` / `version`）と同名のスクリプトはこの形式では実行できません。
 
 ### `bnm exec <ディレクトリ> <コマンド...>`
 
@@ -195,16 +222,43 @@ bnm exec FRONTEND npm install
 bnm exec ./frontend npm install
 ```
 
+### `bnm exec --all <コマンド...>`
+
+設定されたすべてのディレクトリで同じコマンドを順番に実行します（ディレクトリキーのソート順）。途中で失敗しても残りのディレクトリは実行され、いずれかが失敗すると非ゼロ終了コードになります。
+
+```bash
+bnm exec --all git status
+bnm exec --all npm install
+```
+
+### `bnm completion <bash|zsh|fish>`
+
+シェル補完スクリプトを出力します。コマンド名・スクリプト名・（`bnm exec` の）ディレクトリを補完できます。
+
+```bash
+# bash（~/.bashrc）
+source <(bnm completion bash)
+
+# zsh（~/.zshrc）
+source <(bnm completion zsh)
+
+# fish
+bnm completion fish > ~/.config/fish/completions/bnm.fish
+```
+
 ---
 
 ## bnm.json リファレンス
 
-| フィールド    | 型     | 説明                                          |
-| ------------- | ------ | --------------------------------------------- |
-| `name`        | string | プロジェクト名。`PROJECT_NAME` として渡される |
-| `version`     | string | バージョン。`PROJECT_VERSION` として渡される  |
-| `directories` | object | ディレクトリ定義（エイリアスとパス）          |
-| `scripts`     | object | スクリプト定義（モードとタスク一覧）          |
+| フィールド    | 型     | 説明                                             |
+| ------------- | ------ | ------------------------------------------------ |
+| `$schema`     | string | エディタ検証用の JSON Schema URL（任意）         |
+| `name`        | string | プロジェクト名。`PROJECT_NAME` として渡される    |
+| `version`     | string | バージョン。`PROJECT_VERSION` として渡される     |
+| `directories` | object | ディレクトリ定義（エイリアスとパス）             |
+| `scripts`     | object | スクリプト定義（モード・依存関係・タスク一覧）   |
+
+JSON Schema は [`schema/bnm.schema.json`](schema/bnm.schema.json) として公開されています。`bnm init` は `$schema` を自動で書き込むため、VS Code などのエディタで `bnm.json` の検証・補完が効きます。
 
 ### ディレクトリエントリ
 
@@ -215,17 +269,32 @@ bnm exec ./frontend npm install
 
 ### スクリプトグループ
 
-| フィールド | 型     | 説明                                            |
-| ---------- | ------ | ----------------------------------------------- |
-| `mode`     | string | `"parallel"`（デフォルト）または `"sequential"` |
-| `tasks`    | array  | タスクの一覧                                    |
+| フィールド    | 型      | 説明                                                              |
+| ------------- | ------- | ----------------------------------------------------------------- |
+| `mode`        | string  | `"parallel"`（デフォルト）または `"sequential"`                   |
+| `dependsOn`   | array   | このスクリプトの前に実行するスクリプト名。循環は検出してエラー   |
+| `maxParallel` | integer | 並列モードでの同時実行タスク数の上限。`0` または省略で無制限     |
+| `tasks`       | array   | タスクの一覧                                                      |
+
+```json
+{
+  "scripts": {
+    "build": { "tasks": [{ "dir": "FRONTEND", "command": "npm run build" }] },
+    "deploy": {
+      "dependsOn": ["build"],
+      "tasks": [{ "dir": "BACKEND", "command": "npm run deploy" }]
+    }
+  }
+}
+```
 
 ### タスク
 
-| フィールド | 型                   | 説明                        |
-| ---------- | -------------------- | --------------------------- |
-| `dir`      | string               | `directories` のキー名      |
-| `command`  | string または object | OS 別指定も可能（下記参照） |
+| フィールド | 型                   | 説明                                     |
+| ---------- | -------------------- | ---------------------------------------- |
+| `dir`      | string               | `directories` のキー名                   |
+| `command`  | string または object | OS 別指定も可能（下記参照）              |
+| `env`      | object               | このタスクだけに追加で渡す環境変数       |
 
 ### OS 別コマンド指定
 
@@ -250,6 +319,12 @@ bnm はプロジェクトルートの `.env` を自動で読み込み、以下�
 | ----------------- | ----------------------- |
 | `PROJECT_NAME`    | `bnm.json` の `name`    |
 | `PROJECT_VERSION` | `bnm.json` の `version` |
+
+各タスクには、さらに以下が優先度の低い順に適用されます（後のものが優先）：
+
+1. プロセスの環境変数＋プロジェクトルートの `.env`
+2. タスクの実行ディレクトリの `.env`（例: `frontend/.env`）
+3. `bnm.json` のタスク `env` エントリ
 
 環境変数 `NO_COLOR` を設定すると、プレフィックスの色分けを無効にできます。出力先がターミナルでない場合は自動的に無効になります。
 

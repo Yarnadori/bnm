@@ -40,6 +40,7 @@ func initProject() {
 		}
 
 		config := Config{
+			Schema:      schemaURL,
 			Name:        dirName,
 			Version:     "0.0.0",
 			Directories: dirs,

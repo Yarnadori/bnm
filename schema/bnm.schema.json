@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/Yarnadori/bnm/main/schema/bnm.schema.json",
+  "title": "bnm.json",
+  "description": "Configuration file for bnm, a task runner for multi-directory projects.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference for editor validation and autocompletion."
+    },
+    "name": {
+      "type": "string",
+      "description": "Project name. Exposed to task processes as PROJECT_NAME."
+    },
+    "version": {
+      "type": "string",
+      "description": "Project version. Exposed to task processes as PROJECT_VERSION."
+    },
+    "directories": {
+      "type": "object",
+      "description": "Named directory entries usable in scripts and with bnm exec.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string",
+            "description": "Short alias used with bnm exec -X and directory filters."
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative path to the directory."
+          }
+        },
+        "required": ["path"],
+        "additionalProperties": false
+      }
+    },
+    "scripts": {
+      "type": "object",
+      "description": "Named script groups runnable with bnm <script>.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["parallel", "sequential"],
+            "description": "How tasks are run. Defaults to parallel."
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Scripts to run to completion before this one. Cycles are rejected."
+          },
+          "maxParallel": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Maximum number of tasks running at once in parallel mode. 0 or omitted means unlimited."
+          },
+          "tasks": {
+            "type": "array",
+            "description": "Tasks to run.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "dir": {
+                  "type": "string",
+                  "description": "Directory key from directories, or a path. Omit or use '.' for the project root."
+                },
+                "command": {
+                  "description": "Command to run: a string, or an object keyed by OS (windows, mac, linux, default).",
+                  "oneOf": [
+                    { "type": "string" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "windows": { "type": "string" },
+                        "mac": { "type": "string" },
+                        "darwin": { "type": "string" },
+                        "linux": { "type": "string" },
+                        "default": { "type": "string" }
+                      },
+                      "additionalProperties": { "type": "string" }
+                    }
+                  ]
+                },
+                "env": {
+                  "type": "object",
+                  "additionalProperties": { "type": "string" },
+                  "description": "Extra environment variables for this task. Override the shared environment."
+                }
+              },
+              "required": ["command"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["tasks"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["scripts"],
+  "additionalProperties": false
+}

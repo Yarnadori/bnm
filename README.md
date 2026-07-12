@@ -16,11 +16,18 @@ bnm is a task runner designed to streamline command execution and script managem
 - **Initialize** a project with auto-detected subdirectories
 - **Sync directories** in `bnm.json` when project folders are added or removed
 - **Run scripts** defined in `bnm.json` in parallel or sequential mode
-- **Execute arbitrary commands** in any configured directory via alias or path
+- **Script dependencies** — `dependsOn` runs prerequisite scripts first (cycles are rejected)
+- **Directory filters** — `bnm dev -F` runs only the tasks of the given directories
+- **Pass-through arguments** — `bnm dev -- --port 3000` appends extra args to every task command
+- **Concurrency limit** — `maxParallel` caps how many tasks run at once
+- **Execute arbitrary commands** in any configured directory via alias or path, or in all of them with `exec --all`
 - **List** configured directories and scripts with `bnm list`
 - **Cross-platform** command support (Windows / macOS / Linux)
-- **Environment variables** — loads `.env` automatically and exposes `PROJECT_NAME` / `PROJECT_VERSION`
+- **Environment variables** — loads `.env` automatically (project root and per-directory), supports per-task `env`, and exposes `PROJECT_NAME` / `PROJECT_VERSION`
 - **Prefixed, color-coded output** — each process output is labeled with its directory name
+- **Run summary** — per-task status and duration after every script run
+- **Shell completion** — `bnm completion bash|zsh|fish`, plus "Did you mean ...?" typo suggestions
+- **Editor support** — published [JSON Schema](schema/bnm.schema.json) for `bnm.json` (`bnm init` adds `$schema` automatically)
 - **CI-friendly** — non-zero exit code on failure; sequential scripts stop at the first failing task
 - **Clean shutdown** — Ctrl+C terminates the whole process tree of every task
 
@@ -165,7 +172,7 @@ Scripts:
     BACKEND      npm run dev
 ```
 
-### `bnm <script>`
+### `bnm <script> [dir...] [-- args...]`
 
 Runs a script defined in `bnm.json`.
 
@@ -174,11 +181,31 @@ bnm dev
 bnm build
 ```
 
+**Directory filters** — run only the tasks of specific directories (alias with `-`, directory key, or path):
+
+```bash
+bnm dev -F                # only the FRONTEND task
+bnm dev FRONTEND BACKEND  # multiple directories
+bnm dev ./frontend        # by path, and '.' matches root tasks
+```
+
+**Pass-through arguments** — everything after `--` is appended to every task command of the script (dependencies are not affected):
+
+```bash
+bnm test -- --watch
+bnm dev -F -- --port 3000
+```
+
+If the script has `dependsOn`, those scripts run to completion first (see [Script group](#script-group)).
+
+After the run, bnm prints a summary with per-task status (`ok` / `failed` / `skipped` / `canceled`) and duration.
+
 Exit code behavior:
 
 - In `sequential` mode, execution stops at the first failing task.
+- If a dependency script fails, the remaining scripts are skipped.
 - bnm exits with a non-zero code if any task fails, so scripts are safe to use in CI.
-- Note: script names that collide with built-in commands (`init`, `sync`, `list`, `ls`, `exec`, `help`, `version`) cannot be invoked this way.
+- Note: script names that collide with built-in commands (`init`, `sync`, `list`, `ls`, `exec`, `completion`, `help`, `version`) cannot be invoked this way.
 
 ### `bnm exec <dir> <command...>`
 
@@ -195,16 +222,43 @@ bnm exec FRONTEND npm install
 bnm exec ./frontend npm install
 ```
 
+### `bnm exec --all <command...>`
+
+Executes a command in every configured directory, one after another (sorted by directory key). Failures don't stop the remaining directories, but any failure makes bnm exit non-zero.
+
+```bash
+bnm exec --all git status
+bnm exec --all npm install
+```
+
+### `bnm completion <bash|zsh|fish>`
+
+Prints a shell completion script that completes commands, script names, and directories (for `bnm exec`).
+
+```bash
+# bash (~/.bashrc)
+source <(bnm completion bash)
+
+# zsh (~/.zshrc)
+source <(bnm completion zsh)
+
+# fish
+bnm completion fish > ~/.config/fish/completions/bnm.fish
+```
+
 ---
 
 ## bnm.json Reference
 
-| Field         | Type   | Description                                   |
-| ------------- | ------ | --------------------------------------------- |
-| `name`        | string | Project name. Exposed as `PROJECT_NAME`       |
-| `version`     | string | Project version. Exposed as `PROJECT_VERSION` |
-| `directories` | object | Named directory entries with alias and path   |
-| `scripts`     | object | Named script groups with mode and tasks       |
+| Field         | Type   | Description                                            |
+| ------------- | ------ | ------------------------------------------------------ |
+| `$schema`     | string | Optional JSON Schema URL for editor validation         |
+| `name`        | string | Project name. Exposed as `PROJECT_NAME`                |
+| `version`     | string | Project version. Exposed as `PROJECT_VERSION`          |
+| `directories` | object | Named directory entries with alias and path            |
+| `scripts`     | object | Named script groups with mode, dependencies, and tasks |
+
+A JSON Schema is published at [`schema/bnm.schema.json`](schema/bnm.schema.json); `bnm init` writes the `$schema` reference automatically so editors like VS Code validate and autocomplete `bnm.json`.
 
 ### Directory entry
 
@@ -215,17 +269,32 @@ bnm exec ./frontend npm install
 
 ### Script group
 
-| Field   | Type   | Description                              |
-| ------- | ------ | ---------------------------------------- |
-| `mode`  | string | `"parallel"` (default) or `"sequential"` |
-| `tasks` | array  | List of tasks to run                     |
+| Field         | Type    | Description                                                             |
+| ------------- | ------- | ----------------------------------------------------------------------- |
+| `mode`        | string  | `"parallel"` (default) or `"sequential"`                                 |
+| `dependsOn`   | array   | Scripts that run to completion before this one. Cycles are rejected     |
+| `maxParallel` | integer | Max tasks running at once in parallel mode. `0` or omitted is unlimited |
+| `tasks`       | array   | List of tasks to run                                                    |
+
+```json
+{
+  "scripts": {
+    "build": { "tasks": [{ "dir": "FRONTEND", "command": "npm run build" }] },
+    "deploy": {
+      "dependsOn": ["build"],
+      "tasks": [{ "dir": "BACKEND", "command": "npm run deploy" }]
+    }
+  }
+}
+```
 
 ### Task
 
-| Field     | Type             | Description                                    |
-| --------- | ---------------- | ---------------------------------------------- |
-| `dir`     | string           | Directory key from `directories`               |
-| `command` | string or object | Command to run. Can be OS-specific (see below) |
+| Field     | Type             | Description                                            |
+| --------- | ---------------- | ------------------------------------------------------ |
+| `dir`     | string           | Directory key from `directories`                       |
+| `command` | string or object | Command to run. Can be OS-specific (see below)         |
+| `env`     | object           | Extra environment variables applied only to this task |
 
 ### OS-specific commands
 
@@ -250,6 +319,12 @@ bnm automatically loads `.env` from the project root and passes the following va
 | ----------------- | ----------------------------- |
 | `PROJECT_NAME`    | `name` field in `bnm.json`    |
 | `PROJECT_VERSION` | `version` field in `bnm.json` |
+
+Each task additionally receives, in order of increasing precedence:
+
+1. The process environment plus the project root `.env`
+2. `.env` in the task's directory (e.g. `frontend/.env`)
+3. The task's own `env` entries in `bnm.json`
 
 Set `NO_COLOR` to any value to disable colored output prefixes. Colors are also disabled automatically when output is not a terminal.
 
