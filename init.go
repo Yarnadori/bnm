@@ -33,55 +33,10 @@ func initProject() {
 		}
 		dirName := filepath.Base(cwd)
 
-		dirs := map[string]Directory{}
-		usedAliases := map[string]bool{}
-
-		// Generate a unique alias from a directory name
-		assignAlias := func(name string) string {
-			runes := []rune(strings.ToUpper(name))
-			for i := 1; i <= len(runes); i++ {
-				candidate := string(runes[:i])
-				if !usedAliases[candidate] {
-					usedAliases[candidate] = true
-					return candidate
-				}
-			}
-			// Fallback: append a number
-			for i := 2; ; i++ {
-				candidate := fmt.Sprintf("%s%d", string(runes[0]), i)
-				if !usedAliases[candidate] {
-					usedAliases[candidate] = true
-					return candidate
-				}
-			}
-		}
-
-		// Scan and add subdirectories
-		entries, err := os.ReadDir(cwd)
+		dirs, err := scanDirectories(cwd, nil)
 		if err != nil {
 			fmt.Printf("Failed to read directory: %v\n", err)
 			os.Exit(1)
-		}
-		// Dependency and build-output directories that are never task targets
-		skipDirs := map[string]bool{
-			"node_modules": true,
-			"vendor":       true,
-			"dist":         true,
-			"build":        true,
-			"out":          true,
-			"target":       true,
-			"__pycache__":  true,
-		}
-
-		for _, entry := range entries {
-			if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || skipDirs[entry.Name()] {
-				continue
-			}
-			name := entry.Name()
-			dirs[strings.ToUpper(name)] = Directory{
-				Alias: assignAlias(name),
-				Path:  "./" + name,
-			}
 		}
 
 		config := Config{

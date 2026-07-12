@@ -1,20 +1,23 @@
 # Security Policy
 
-## Supported Versions
-
-Only the latest release of bnm receives security fixes.
-
 ## Reporting a Vulnerability
 
-Please do **not** report security vulnerabilities through public GitHub issues.
+Please do not report security vulnerabilities through public GitHub issues.
 
-Instead, use [GitHub private vulnerability reporting](https://github.com/Yarnadori/bnm/security/advisories/new) ("Report a vulnerability" on the Security tab). You should receive a response within a week.
+Report security concerns privately through GitHub Security Advisories:
 
-Please include:
+https://github.com/Yarnadori/bnm/security/advisories/new
 
-- A description of the vulnerability and its impact
-- Steps to reproduce
-- Affected version(s) and platform(s)
+Include:
+
+- A description of the issue.
+- Steps to reproduce or a proof of concept.
+- The affected version or commit.
+- Any suggested mitigation, if known.
+
+## Supported Versions
+
+Security fixes are handled on the default branch. If releases are published, users should upgrade to the latest release.
 
 ## Security Model
 

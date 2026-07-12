@@ -1,22 +1,35 @@
 name: Feature request
-description: Suggest an idea or improvement
-labels: [enhancement]
+description: Suggest an improvement or new capability for bnm.
+title: "feat: "
+labels: ["enhancement"]
 body:
   - type: textarea
     id: problem
     attributes:
-      label: What problem does this solve?
-      description: Describe the use case or pain point.
+      label: Problem
+      description: What workflow is hard or missing today?
+      placeholder: I want to...
     validations:
       required: true
   - type: textarea
-    id: solution
+    id: proposal
     attributes:
-      label: Proposed solution
-      description: How would you like it to work? Example commands or bnm.json snippets help.
+      label: Proposal
+      description: Describe the behavior you would like.
     validations:
       required: true
   - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
+      description: What workarounds or alternative designs have you tried?
+    validations:
+      required: false
+  - type: textarea
+    id: examples
+    attributes:
+      label: Example usage
+      description: Show the command or bnm.json shape you imagine.
+      render: shell
+    validations:
+      required: false

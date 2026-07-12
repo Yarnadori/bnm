@@ -1,25 +1,18 @@
-# Contributing to bnm
+# Contributing
 
-Thank you for your interest in contributing! Bug reports, feature requests, and pull requests are all welcome.
+Thanks for your interest in contributing to bnm.
 
-## Reporting Issues
+## Development
 
-- Use the [issue templates](https://github.com/Yarnadori/bnm/issues/new/choose).
-- For security vulnerabilities, please do **not** open a public issue — see [SECURITY.md](SECURITY.md).
-
-## Development Setup
-
-Requirements: Go (version matching `go.mod` or newer).
+1. Fork the repository and create a topic branch.
+2. Make focused changes with clear commit messages.
+3. Format Go files before committing:
 
 ```bash
-git clone https://github.com/Yarnadori/bnm.git
-cd bnm
-go build -o bnm .
+gofmt -w *.go
 ```
 
-## Before Submitting a Pull Request
-
-Please make sure the following all pass:
+4. Run checks before opening a pull request:
 
 ```bash
 gofmt -l .        # should print nothing
@@ -27,26 +20,34 @@ go vet ./...
 go test -race ./...
 ```
 
-Guidelines:
+## Pull Requests
 
-- Keep changes focused — one topic per pull request.
-- Add or update tests for behavior changes.
-- bnm is intentionally dependency-light; avoid adding new dependencies unless there is a strong reason.
-- bnm supports Linux, macOS, and Windows. Platform-specific code goes in `proc_unix.go` / `proc_windows.go` style build-tagged files.
+- Keep pull requests focused on one bug fix or feature.
+- Include a short summary of the change.
+- Add or update documentation when behavior changes.
+- Mention any manual testing you performed.
+
+## Issues
+
+Use the issue templates when reporting bugs or requesting features. For bugs, include reproduction steps, your operating system, and relevant `bnm.json` content with secrets removed.
+
+## Code Style
+
+- Prefer small, direct functions.
+- Keep behavior cross-platform where possible. Platform-specific code goes in build-tagged files (`proc_unix.go` / `proc_windows.go`).
+- Avoid adding dependencies unless they clearly reduce complexity.
 
 ## Project Layout
 
-| File         | Role                                                        |
-| ------------ | ----------------------------------------------------------- |
-| `main.go`    | CLI entry point and command dispatch                        |
-| `config.go`  | `bnm.json` schema and loading                               |
-| `init.go`    | `bnm init` — project scaffolding                            |
-| `runner.go`  | `bnm <script>` — parallel/sequential script execution       |
-| `exec.go`    | `bnm exec` — ad-hoc command execution in a target directory |
-| `list.go`    | `bnm list` — show configured directories and scripts        |
-| `process.go` | Process spawning and prefixed output streaming              |
-| `color.go`   | ANSI color handling for output prefixes                     |
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+| File           | Role                                                        |
+| -------------- | ----------------------------------------------------------- |
+| `main.go`      | CLI entry point and command dispatch                        |
+| `config.go`    | `bnm.json` schema and loading                               |
+| `init.go`      | `bnm init` — project scaffolding                            |
+| `sync.go`      | `bnm sync` — refresh directory entries in `bnm.json`        |
+| `directory.go` | Directory scanning and alias assignment                     |
+| `runner.go`    | `bnm <script>` — parallel/sequential script execution       |
+| `exec.go`      | `bnm exec` — ad-hoc command execution in a target directory |
+| `list.go`      | `bnm list` — show configured directories and scripts        |
+| `process.go`   | Process spawning and prefixed output streaming              |
+| `color.go`     | ANSI color handling for output prefixes                     |

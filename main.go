@@ -10,6 +10,7 @@ var version = "dev"
 func printUsage() {
 	fmt.Println("Usage: bnm <command>")
 	fmt.Println("  init                         : Initialize (Creates bnm.json)")
+	fmt.Println("  sync                         : Sync directories in bnm.json with current subdirectories")
 	fmt.Println("  list                         : List directories and scripts defined in bnm.json")
 	fmt.Println("  exec <dir or alias> <cmd...> : Execute a command in target (use '.' for current directory)")
 	fmt.Println("  <script>                     : Execute a script defined in bnm.json (e.g., dev)")
@@ -37,6 +38,9 @@ func main() {
 
 	case "init":
 		initProject()
+
+	case "sync":
+		syncProject()
 
 	case "list", "ls":
 		runList()

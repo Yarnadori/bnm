@@ -8,6 +8,8 @@
 *.so
 *.dylib
 bnm
+dist/
+build/
 
 # Test binary, built with `go test -c`
 *.test
@@ -25,9 +27,14 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# Local environment
 .env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/

@@ -1,5 +1,8 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
 contact_links:
+  - name: Questions and support
+    url: https://github.com/Yarnadori/bnm/discussions
+    about: Ask usage questions or discuss ideas before opening an issue.
   - name: Security vulnerability
     url: https://github.com/Yarnadori/bnm/security/advisories/new
     about: Please report security vulnerabilities privately here, not as public issues.
