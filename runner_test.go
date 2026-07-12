@@ -148,7 +148,7 @@ func TestShellQuotePOSIX(t *testing.T) {
 }
 
 func TestShellQuoteWindows(t *testing.T) {
-	if got, want := shellQuoteWindows(`%PATH% "quoted"`), `"%%PATH%% ""quoted"""`; got != want {
+	if got, want := shellQuoteWindows(`%PATH% "quoted"`), `"%PATH% ""quoted"""`; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }

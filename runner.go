@@ -338,9 +338,10 @@ func shellQuotePOSIX(a string) string {
 }
 
 func shellQuoteWindows(a string) string {
-	// cmd.exe expands percent-delimited environment variables even inside
-	// quotes. Doubling percent signs preserves them as argument data.
-	a = strings.ReplaceAll(a, "%", "%%")
+	// cmd.exe expands %VAR% even inside quotes, and cmd /C offers no escape
+	// for percent signs (%% doubling only works in batch files; carets are
+	// literal inside quotes). Percents pass through unchanged: an undefined
+	// %name% survives as-is, which is the least-bad outcome.
 	return `"` + strings.ReplaceAll(a, `"`, `""`) + `"`
 }
 
