@@ -327,13 +327,21 @@ func shellJoin(args []string) string {
 }
 
 func shellQuoteArg(a string) string {
-	if a != "" && !strings.ContainsAny(a, " \t\"'$&|<>^();`\\*?") {
-		return a
-	}
 	if runtime.GOOS == "windows" {
-		return `"` + strings.ReplaceAll(a, `"`, `""`) + `"`
+		return shellQuoteWindows(a)
 	}
+	return shellQuotePOSIX(a)
+}
+
+func shellQuotePOSIX(a string) string {
 	return "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+}
+
+func shellQuoteWindows(a string) string {
+	// cmd.exe expands percent-delimited environment variables even inside
+	// quotes. Doubling percent signs preserves them as argument data.
+	a = strings.ReplaceAll(a, "%", "%%")
+	return `"` + strings.ReplaceAll(a, `"`, `""`) + `"`
 }
 
 func printSummary(results []taskResult) {

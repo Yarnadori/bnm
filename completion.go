@@ -57,31 +57,34 @@ func printCompletion(shell string) {
 // one per line and stays silent when bnm.json is missing or broken.
 func runComplete(what string) {
 	config, err := loadConfig()
+	for _, candidate := range completionCandidates(what, config, err) {
+		fmt.Println(candidate)
+	}
+}
+
+func completionCandidates(what string, config *Config, configErr error) []string {
 	switch what {
 	case "commands":
-		for _, c := range builtinCommands {
-			fmt.Println(c)
+		candidates := append([]string(nil), builtinCommands...)
+		if configErr == nil {
+			candidates = append(candidates, sortedKeys(config.Scripts)...)
 		}
-		if err == nil {
-			for _, name := range sortedKeys(config.Scripts) {
-				fmt.Println(name)
-			}
-		}
+		return candidates
 	case "scripts":
-		if err == nil {
-			for _, name := range sortedKeys(config.Scripts) {
-				fmt.Println(name)
-			}
+		if configErr == nil {
+			return sortedKeys(config.Scripts)
 		}
 	case "dirs":
-		if err == nil {
-			fmt.Println(".")
+		if configErr == nil {
+			candidates := []string{"."}
 			for _, key := range sortedKeys(config.Directories) {
-				fmt.Println(key)
+				candidates = append(candidates, key)
 				if alias := config.Directories[key].Alias; alias != "" {
-					fmt.Println("-" + alias)
+					candidates = append(candidates, "-"+alias)
 				}
 			}
+			return candidates
 		}
 	}
+	return nil
 }

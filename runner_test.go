@@ -121,18 +121,34 @@ func TestFilterTasksRootDir(t *testing.T) {
 
 func TestShellJoin(t *testing.T) {
 	got := shellJoin([]string{"--port", "3000"})
-	if got != "--port 3000" {
-		t.Errorf("got %q", got)
-	}
-
-	got = shellJoin([]string{"--name", "hello world"})
 	var want string
 	if runtime.GOOS == "windows" {
-		want = `--name "hello world"`
+		want = `"--port" "3000"`
 	} else {
-		want = "--name 'hello world'"
+		want = "'--port' '3000'"
 	}
 	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestShellQuotePOSIX(t *testing.T) {
+	cases := map[string]string{
+		"hello world":  "'hello world'",
+		"line1\nline2": "'line1\nline2'",
+		"it's":         "'it'\\''s'",
+		"#comment":     "'#comment'",
+		"~":            "'~'",
+	}
+	for input, want := range cases {
+		if got := shellQuotePOSIX(input); got != want {
+			t.Errorf("shellQuotePOSIX(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestShellQuoteWindows(t *testing.T) {
+	if got, want := shellQuoteWindows(`%PATH% "quoted"`), `"%%PATH%% ""quoted"""`; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }

@@ -153,6 +153,27 @@ func runExecAll(cmdArgs []string) {
 	fmt.Printf("[bnm] Executing '%s' in all directories...\n", commandStr)
 
 	var failedDirs []string
+	failedDirs = runExecAllProcesses(ctx, config, sharedEnv, func(ctx context.Context, task Task, env []string) error {
+		return runProcess(ctx, task, env)
+	}, commandStr)
+
+	if interrupted.Load() {
+		os.Exit(130)
+	}
+	if len(failedDirs) > 0 {
+		fmt.Printf("[bnm] Command failed in: %s\n", strings.Join(failedDirs, ", "))
+		os.Exit(1)
+	}
+}
+
+func runExecAllProcesses(
+	ctx context.Context,
+	config *Config,
+	sharedEnv []string,
+	run func(context.Context, Task, []string) error,
+	commandStr string,
+) []string {
+	var failedDirs []string
 	for _, key := range sortedKeys(config.Directories) {
 		if ctx.Err() != nil {
 			break
@@ -162,16 +183,9 @@ func runExecAll(cmdArgs []string) {
 			Dir:     config.Directories[key].Path,
 			Command: Command(commandStr),
 		}
-		if err := runProcess(ctx, task, taskEnv(sharedEnv, task)); err != nil && ctx.Err() == nil {
+		if err := run(ctx, task, taskEnv(sharedEnv, task)); err != nil && ctx.Err() == nil {
 			failedDirs = append(failedDirs, key)
 		}
 	}
-
-	if interrupted.Load() {
-		os.Exit(130)
-	}
-	if len(failedDirs) > 0 {
-		fmt.Printf("[bnm] Command failed in: %s\n", strings.Join(failedDirs, ", "))
-		os.Exit(1)
-	}
+	return failedDirs
 }
