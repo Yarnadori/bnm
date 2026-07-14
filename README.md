@@ -19,6 +19,10 @@ bnm is a task runner designed to streamline command execution and script managem
 - **Script dependencies** — `dependsOn` runs prerequisite scripts first (cycles are rejected)
 - **Directory filters** — `bnm dev -F` runs only the tasks of the given directories
 - **Pass-through arguments** — `bnm dev -- --port 3000` appends extra args to every task command
+- **Watch mode** — `bnm dev --watch` reruns the script when files in task directories change
+- **Dry run** — `bnm deploy --dry-run` shows the execution plan without running anything
+- **Timeouts & retries** — per-task `timeout` kills slow tasks, `retries` reruns flaky ones
+- **Config validation** — `bnm check` catches broken paths, aliases, and dependencies before anything runs
 - **Concurrency limit** — `maxParallel` caps how many tasks run at once
 - **Execute arbitrary commands** in any configured directory via alias or path, or in all of them with `exec --all`
 - **List** configured directories and scripts with `bnm list`
@@ -154,6 +158,17 @@ Initializes the project by creating `bnm.json` in the current directory. Subdire
 
 Updates the `directories` section in `bnm.json` to match the current subdirectories. Existing aliases are kept for unchanged directories, new directories get generated aliases, and removed directories are deleted from `directories`.
 
+### `bnm check`
+
+Validates `bnm.json` and exits non-zero if anything is wrong: JSON syntax, `mode` / `maxParallel` / `timeout` / `retries` values, `dependsOn` references and cycles, directory paths that don't exist on disk, duplicate aliases, task `dir` entries that resolve nowhere, and tasks with no command for the current OS. Useful as an early step in CI.
+
+```bash
+$ bnm check
+[bnm] Found 2 problem(s) in bnm.json:
+  - directory 'FRONTEND': path './frontend' does not exist
+  - script 'dev' task 2: no command for this OS (linux)
+```
+
 ### `bnm list`
 
 Shows the directories and scripts defined in `bnm.json`. Alias: `bnm ls`.
@@ -196,6 +211,19 @@ bnm test -- --watch
 bnm dev -F -- --port 3000
 ```
 
+**Watch mode** — `--watch` (or `-w`) reruns the script whenever a file under any task directory changes. Running tasks are terminated and restarted, so it also works with dev servers. Hidden directories and dependency/build directories (`node_modules`, `dist`, `target`, etc.) are ignored. Stop with Ctrl+C.
+
+```bash
+bnm test --watch
+bnm dev -F --watch
+```
+
+**Dry run** — `--dry-run` (or `-n`) prints the execution plan (order, mode, resolved directories, and commands, including dependencies and filters) without running anything:
+
+```bash
+bnm deploy --dry-run
+```
+
 If the script has `dependsOn`, those scripts run to completion first (see [Script group](#script-group)).
 
 After the run, bnm prints a summary with per-task status (`ok` / `failed` / `skipped` / `canceled`) and duration.
@@ -205,7 +233,7 @@ Exit code behavior:
 - In `sequential` mode, execution stops at the first failing task.
 - If a dependency script fails, the remaining scripts are skipped.
 - bnm exits with a non-zero code if any task fails, so scripts are safe to use in CI.
-- Note: script names that collide with built-in commands (`init`, `sync`, `list`, `ls`, `exec`, `completion`, `help`, `version`) cannot be invoked this way.
+- Note: script names that collide with built-in commands (`init`, `sync`, `list`, `ls`, `check`, `exec`, `completion`, `help`, `version`) cannot be invoked this way.
 
 ### `bnm exec <dir> <command...>`
 
@@ -290,11 +318,21 @@ A JSON Schema is published at [`schema/bnm.schema.json`](schema/bnm.schema.json)
 
 ### Task
 
-| Field     | Type             | Description                                            |
-| --------- | ---------------- | ------------------------------------------------------ |
-| `dir`     | string           | Directory key from `directories`                       |
-| `command` | string or object | Command to run. Can be OS-specific (see below)         |
-| `env`     | object           | Extra environment variables applied only to this task |
+| Field     | Type             | Description                                                                  |
+| --------- | ---------------- | ---------------------------------------------------------------------------- |
+| `dir`     | string           | Directory key from `directories`                                             |
+| `command` | string or object | Command to run. Can be OS-specific (see below)                               |
+| `env`     | object           | Extra environment variables applied only to this task                        |
+| `timeout` | string           | Per-attempt time limit (e.g. `"30s"`, `"2m"`). The task is killed when it elapses |
+| `retries` | integer          | How many times to rerun the task after a failure. Default `0`                |
+
+```json
+{
+  "tasks": [
+    { "dir": "BACKEND", "command": "npm run test:e2e", "timeout": "5m", "retries": 2 }
+  ]
+}
+```
 
 ### OS-specific commands
 

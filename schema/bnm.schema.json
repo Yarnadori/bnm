@@ -88,6 +88,16 @@
                   "type": "object",
                   "additionalProperties": { "type": "string" },
                   "description": "Extra environment variables for this task. Override the shared environment."
+                },
+                "timeout": {
+                  "type": "string",
+                  "description": "Per-attempt time limit as a Go duration string (e.g. \"30s\", \"2m\"). The task is killed when it elapses.",
+                  "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+                },
+                "retries": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "How many times to rerun the task after a failure. 0 or omitted means no retries."
                 }
               },
               "required": ["command"],

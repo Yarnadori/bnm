@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
 
 func TestCommandUnmarshalString(t *testing.T) {
@@ -155,6 +156,39 @@ func TestLoadConfigValidDependencies(t *testing.T) {
 	}
 	if deploy.Tasks[0].Env["FOO"] != "bar" {
 		t.Errorf("Env: got %v", deploy.Tasks[0].Env)
+	}
+}
+
+func TestLoadConfigTimeoutAndRetries(t *testing.T) {
+	writeConfig(t, `{"scripts": {"dev": {"tasks": [
+		{"command": "echo hi", "timeout": "30s", "retries": 2}
+	]}}}`)
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	task := config.Scripts["dev"].Tasks[0]
+	if task.Timeout != Duration(30*time.Second) {
+		t.Errorf("Timeout: got %s, want 30s", task.Timeout)
+	}
+	if task.Retries != 2 {
+		t.Errorf("Retries: got %d, want 2", task.Retries)
+	}
+}
+
+func TestLoadConfigInvalidTimeout(t *testing.T) {
+	for _, timeout := range []string{`"bogus"`, `30`, `"-1s"`} {
+		writeConfig(t, `{"scripts": {"dev": {"tasks": [{"command": "echo hi", "timeout": `+timeout+`}]}}}`)
+		if _, err := loadConfig(); err == nil {
+			t.Errorf("expected error for timeout %s", timeout)
+		}
+	}
+}
+
+func TestLoadConfigNegativeRetries(t *testing.T) {
+	writeConfig(t, `{"scripts": {"dev": {"tasks": [{"command": "echo hi", "retries": -1}]}}}`)
+	if _, err := loadConfig(); err == nil {
+		t.Error("expected error for negative retries")
 	}
 }
 

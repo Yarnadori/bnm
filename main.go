@@ -12,6 +12,7 @@ func printUsage() {
 	fmt.Println("  init                         : Initialize (Creates bnm.json)")
 	fmt.Println("  sync                         : Sync directories in bnm.json with current subdirectories")
 	fmt.Println("  list                         : List directories and scripts defined in bnm.json")
+	fmt.Println("  check                        : Validate bnm.json (paths, aliases, commands, dependencies)")
 	fmt.Println("  exec <dir or alias> <cmd...> : Execute a command in target (use '.' for current directory)")
 	fmt.Println("  exec --all <cmd...>          : Execute a command in every configured directory")
 	fmt.Println("  completion <bash|zsh|fish>   : Print a shell completion script")
@@ -19,6 +20,8 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Script options:")
 	fmt.Println("  <script> -F FRONTEND         : Run only tasks in the given directories (alias, key, or path)")
+	fmt.Println("  <script> --watch             : Rerun the script when files in task directories change")
+	fmt.Println("  <script> --dry-run           : Show the execution plan without running anything")
 	fmt.Println("  <script> -- --port 3000      : Pass extra arguments to every task command")
 	fmt.Println()
 	fmt.Println("Options:")
@@ -51,6 +54,9 @@ func main() {
 	case "list", "ls":
 		runList()
 
+	case "check":
+		runCheck()
+
 	case "exec":
 		if len(os.Args) >= 4 && os.Args[2] == "--all" {
 			runExecAll(os.Args[3:])
@@ -82,19 +88,26 @@ func main() {
 
 	default:
 		// Otherwise, treat it as a script execution
-		filters, extraArgs := splitScriptArgs(os.Args[2:])
-		runScript(command, filters, extraArgs)
+		filters, extraArgs, opts := splitScriptArgs(os.Args[2:])
+		runScript(command, filters, extraArgs, opts)
 	}
 }
 
-// splitScriptArgs separates directory filters from pass-through arguments:
-// everything before "--" filters tasks by directory, everything after is
-// appended to each task command.
-func splitScriptArgs(args []string) (filters []string, extraArgs []string) {
+// splitScriptArgs separates script options and directory filters from
+// pass-through arguments: everything before "--" is an option or a directory
+// filter, everything after is appended to each task command.
+func splitScriptArgs(args []string) (filters []string, extraArgs []string, opts scriptOptions) {
 	for i, a := range args {
-		if a == "--" {
-			return args[:i], args[i+1:]
+		switch a {
+		case "--":
+			return filters, args[i+1:], opts
+		case "--watch", "-w":
+			opts.Watch = true
+		case "--dry-run", "-n":
+			opts.DryRun = true
+		default:
+			filters = append(filters, a)
 		}
 	}
-	return args, nil
+	return filters, nil, opts
 }

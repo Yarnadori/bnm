@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"runtime"
 	"testing"
+	"time"
 )
 
 func testConfig() *Config {
@@ -200,21 +201,86 @@ func TestTaskEnvDoesNotMutateShared(t *testing.T) {
 }
 
 func TestSplitScriptArgs(t *testing.T) {
-	filters, extra := splitScriptArgs([]string{"-F", "--", "--port", "3000"})
+	filters, extra, opts := splitScriptArgs([]string{"-F", "--", "--port", "3000"})
 	if !reflect.DeepEqual(filters, []string{"-F"}) {
 		t.Errorf("filters: got %v", filters)
 	}
 	if !reflect.DeepEqual(extra, []string{"--port", "3000"}) {
 		t.Errorf("extra: got %v", extra)
 	}
-
-	filters, extra = splitScriptArgs([]string{"-F"})
-	if !reflect.DeepEqual(filters, []string{"-F"}) || extra != nil {
-		t.Errorf("got %v / %v", filters, extra)
+	if opts.Watch || opts.DryRun {
+		t.Errorf("opts: got %+v, want zero", opts)
 	}
 
-	filters, extra = splitScriptArgs(nil)
-	if len(filters) != 0 || len(extra) != 0 {
-		t.Errorf("got %v / %v", filters, extra)
+	filters, extra, opts = splitScriptArgs([]string{"-F"})
+	if !reflect.DeepEqual(filters, []string{"-F"}) || extra != nil || opts.Watch || opts.DryRun {
+		t.Errorf("got %v / %v / %+v", filters, extra, opts)
+	}
+
+	filters, extra, opts = splitScriptArgs(nil)
+	if len(filters) != 0 || len(extra) != 0 || opts.Watch || opts.DryRun {
+		t.Errorf("got %v / %v / %+v", filters, extra, opts)
+	}
+}
+
+func TestSplitScriptArgsOptions(t *testing.T) {
+	filters, extra, opts := splitScriptArgs([]string{"--watch", "-F", "--dry-run", "--", "--watch"})
+	if !opts.Watch || !opts.DryRun {
+		t.Errorf("opts: got %+v, want watch and dry-run set", opts)
+	}
+	if !reflect.DeepEqual(filters, []string{"-F"}) {
+		t.Errorf("filters: got %v", filters)
+	}
+	// Flags after "--" are pass-through arguments, not options
+	if !reflect.DeepEqual(extra, []string{"--watch"}) {
+		t.Errorf("extra: got %v", extra)
+	}
+
+	_, _, opts = splitScriptArgs([]string{"-w", "-n"})
+	if !opts.Watch || !opts.DryRun {
+		t.Errorf("short flags: got %+v", opts)
+	}
+}
+
+func TestRunTaskAttemptsRetries(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	// Fails on the first attempt, succeeds on the second
+	task := Task{
+		Name:    "retry",
+		Command: Command("test -f " + marker + " || { touch " + marker + "; exit 1; }"),
+		Retries: 1,
+	}
+	if err := runTaskAttempts(t.Context(), task, os.Environ()); err != nil {
+		t.Errorf("expected success after retry, got %v", err)
+	}
+
+	// No retries: the same command fails
+	os.Remove(marker)
+	task.Retries = 0
+	if err := runTaskAttempts(t.Context(), task, os.Environ()); err == nil {
+		t.Error("expected failure without retries")
+	}
+}
+
+func TestRunTaskAttemptsTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	task := Task{
+		Name:    "slow",
+		Command: "sleep 5",
+		Timeout: Duration(100 * time.Millisecond),
+	}
+	start := time.Now()
+	err := runTaskAttempts(t.Context(), task, os.Environ())
+	if err == nil {
+		t.Error("expected timeout error")
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("task was not killed by timeout (took %s)", elapsed)
 	}
 }

@@ -29,7 +29,12 @@ const (
 	statusCanceled = "canceled"
 )
 
-func runScript(targetScript string, filters []string, extraArgs []string) {
+type scriptOptions struct {
+	Watch  bool
+	DryRun bool
+}
+
+func runScript(targetScript string, filters []string, extraArgs []string, opts scriptOptions) {
 	_ = godotenv.Load()
 
 	config := mustLoadConfig()
@@ -71,6 +76,11 @@ func runScript(targetScript string, filters []string, extraArgs []string) {
 		tasksByScript[name] = resolved
 	}
 
+	if opts.DryRun {
+		printPlan(config, order, tasksByScript, targetScript)
+		return
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -86,6 +96,27 @@ func runScript(targetScript string, filters []string, extraArgs []string) {
 
 	sharedEnv := buildEnv(config)
 
+	if opts.Watch {
+		runScriptWatch(ctx, config, order, tasksByScript, targetScript, sharedEnv)
+		if interrupted.Load() {
+			os.Exit(130)
+		}
+		return
+	}
+
+	failed := runScriptOnce(ctx, config, order, tasksByScript, targetScript, sharedEnv)
+
+	if interrupted.Load() {
+		os.Exit(130)
+	}
+	if failed {
+		os.Exit(1)
+	}
+}
+
+// runScriptOnce runs the resolved scripts in order and prints the summary.
+// It reports whether any task failed.
+func runScriptOnce(ctx context.Context, config *Config, order []string, tasksByScript map[string][]Task, targetScript string, sharedEnv []string) bool {
 	var results []taskResult
 	failed := false
 	for i, name := range order {
@@ -122,13 +153,39 @@ func runScript(targetScript string, filters []string, extraArgs []string) {
 
 	fmt.Println("[bnm] All tasks have finished.")
 	printSummary(results)
+	return failed
+}
 
-	if interrupted.Load() {
-		os.Exit(130)
+// printPlan shows what a script run would execute, without running anything.
+func printPlan(config *Config, order []string, tasksByScript map[string][]Task, targetScript string) {
+	fmt.Printf("[bnm] Dry run: execution plan for '%s'\n", targetScript)
+	for i, name := range order {
+		group := config.Scripts[name]
+		mode := group.Mode
+		if mode == "" {
+			mode = "parallel"
+		}
+		kind := "script"
+		if name != targetScript {
+			kind = "dependency"
+		}
+		detail := mode
+		if mode == "parallel" && group.MaxParallel > 0 {
+			detail += fmt.Sprintf(", maxParallel %d", group.MaxParallel)
+		}
+		fmt.Printf("%d. %s '%s' (%s)\n", i+1, kind, name, detail)
+		for _, t := range tasksByScript[name] {
+			attrs := ""
+			if t.Timeout > 0 {
+				attrs += fmt.Sprintf("  [timeout %s]", t.Timeout)
+			}
+			if t.Retries > 0 {
+				attrs += fmt.Sprintf("  [retries %d]", t.Retries)
+			}
+			fmt.Printf("     %-12s (%s) $ %s%s\n", t.Name, t.Dir, t.Command, attrs)
+		}
 	}
-	if failed {
-		os.Exit(1)
-	}
+	fmt.Println("[bnm] No commands were executed.")
 }
 
 // executionOrder returns the scripts to run for target: dependencies first
@@ -224,7 +281,7 @@ func runGroup(ctx context.Context, mode string, maxParallel int, tasks []Task, s
 
 	runOne := func(i int, t Task) bool {
 		start := time.Now()
-		err := runProcess(ctx, t, taskEnv(sharedEnv, t))
+		err := runTaskAttempts(ctx, t, taskEnv(sharedEnv, t))
 		results[i].Duration = time.Since(start)
 		switch {
 		case err == nil:
@@ -283,6 +340,31 @@ func runGroup(ctx context.Context, mode string, maxParallel int, tasks []Task, s
 		ok = !anyFailed.Load()
 	}
 	return results, ok
+}
+
+// runTaskAttempts runs a task, enforcing its timeout per attempt and
+// retrying failed attempts up to task.Retries times.
+func runTaskAttempts(ctx context.Context, t Task, env []string) error {
+	for attempt := 0; ; attempt++ {
+		attemptCtx := ctx
+		cancel := context.CancelFunc(func() {})
+		if t.Timeout > 0 {
+			attemptCtx, cancel = context.WithTimeout(ctx, time.Duration(t.Timeout))
+		}
+		err := runProcess(attemptCtx, t, env)
+		timedOut := attemptCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil
+		cancel()
+		if err == nil || ctx.Err() != nil {
+			return err
+		}
+		if timedOut {
+			fmt.Printf("[%s] Timed out after %s.\n", t.Name, t.Timeout)
+		}
+		if attempt >= t.Retries {
+			return err
+		}
+		fmt.Printf("[%s] Attempt %d/%d failed. Retrying...\n", t.Name, attempt+1, t.Retries+1)
+	}
 }
 
 // taskEnv extends the shared environment with the task directory's .env file

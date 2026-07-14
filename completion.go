@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-var builtinCommands = []string{"init", "sync", "list", "exec", "completion", "help", "version"}
+var builtinCommands = []string{"init", "sync", "list", "check", "exec", "completion", "help", "version"}
 
 const bashCompletion = `_bnm_completions() {
   local cur=${COMP_WORDS[COMP_CWORD]}

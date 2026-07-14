@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"time"
 )
 
 const configFileName = "bnm.json"
@@ -38,6 +39,28 @@ type Task struct {
 	Dir     string            `json:"dir,omitempty"`
 	Command Command           `json:"command"`
 	Env     map[string]string `json:"env,omitempty"`
+	Timeout Duration          `json:"timeout,omitempty"`
+	Retries int               `json:"retries,omitempty"`
+}
+
+// Duration is a time.Duration that unmarshals from a JSON string like "30s".
+type Duration time.Duration
+
+func (d *Duration) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("timeout must be a duration string like \"30s\"")
+	}
+	v, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("invalid timeout %q (expected a duration like \"30s\" or \"2m\")", s)
+	}
+	*d = Duration(v)
+	return nil
+}
+
+func (d Duration) String() string {
+	return time.Duration(d).String()
 }
 
 type Command string
@@ -89,6 +112,14 @@ func loadConfig() (*Config, error) {
 		}
 		if group.MaxParallel < 0 {
 			return nil, fmt.Errorf("script '%s' has negative maxParallel %d", name, group.MaxParallel)
+		}
+		for i, task := range group.Tasks {
+			if task.Timeout < 0 {
+				return nil, fmt.Errorf("script '%s' task %d has negative timeout %s", name, i+1, task.Timeout)
+			}
+			if task.Retries < 0 {
+				return nil, fmt.Errorf("script '%s' task %d has negative retries %d", name, i+1, task.Retries)
+			}
 		}
 	}
 
