@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 var version = "dev"
@@ -22,6 +23,9 @@ func printUsage() {
 	fmt.Println("  <script> -F FRONTEND         : Run only tasks in the given directories (alias, key, or path)")
 	fmt.Println("  <script> --watch             : Rerun the script when files in task directories change")
 	fmt.Println("  <script> --dry-run           : Show the execution plan without running anything")
+	fmt.Println("  <script> --log-dir DIR       : Also write each task's output to DIR/<script>/<task>.log")
+	fmt.Println("  <script> --summary json      : Print the run summary as JSON")
+	fmt.Println("  <script> --no-color          : Disable colored output (NO_COLOR is also honored)")
 	fmt.Println("  <script> -- --port 3000      : Pass extra arguments to every task command")
 	fmt.Println()
 	fmt.Println("Options:")
@@ -88,7 +92,11 @@ func main() {
 
 	default:
 		// Otherwise, treat it as a script execution
-		filters, extraArgs, opts := splitScriptArgs(os.Args[2:])
+		filters, extraArgs, opts, err := splitScriptArgs(os.Args[2:])
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 		runScript(command, filters, extraArgs, opts)
 	}
 }
@@ -96,18 +104,50 @@ func main() {
 // splitScriptArgs separates script options and directory filters from
 // pass-through arguments: everything before "--" is an option or a directory
 // filter, everything after is appended to each task command.
-func splitScriptArgs(args []string) (filters []string, extraArgs []string, opts scriptOptions) {
-	for i, a := range args {
+func splitScriptArgs(args []string) (filters []string, extraArgs []string, opts scriptOptions, err error) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch a {
 		case "--":
-			return filters, args[i+1:], opts
+			return filters, args[i+1:], opts, nil
 		case "--watch", "-w":
 			opts.Watch = true
+			continue
 		case "--dry-run", "-n":
 			opts.DryRun = true
+			continue
+		case "--no-color":
+			opts.NoColor = true
+			continue
+		}
+		name, value, hasValue := strings.Cut(a, "=")
+		takeValue := func() (string, error) {
+			if hasValue {
+				return value, nil
+			}
+			i++
+			if i >= len(args) || args[i] == "--" {
+				return "", fmt.Errorf("%s requires a value", name)
+			}
+			return args[i], nil
+		}
+		switch name {
+		case "--log-dir":
+			if opts.LogDir, err = takeValue(); err != nil {
+				return nil, nil, opts, err
+			}
+		case "--summary":
+			v, err := takeValue()
+			if err != nil {
+				return nil, nil, opts, err
+			}
+			if v != "text" && v != "json" {
+				return nil, nil, opts, fmt.Errorf("--summary must be 'text' or 'json', got '%s'", v)
+			}
+			opts.Summary = v
 		default:
 			filters = append(filters, a)
 		}
 	}
-	return filters, nil, opts
+	return filters, nil, opts, nil
 }

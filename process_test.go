@@ -13,7 +13,7 @@ func TestPrefixLoggerLongLines(t *testing.T) {
 	// Lines longer than bufio.Scanner's 64KB default must not be dropped
 	longLine := strings.Repeat("a", 100*1024)
 	var out strings.Builder
-	prefixLogger("TEST", strings.NewReader(longLine+"\nshort\n"), &out)
+	prefixLogger("TEST", strings.NewReader(longLine+"\nshort\n"), &out, nil)
 
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
 	if len(lines) != 2 {

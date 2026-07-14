@@ -28,8 +28,9 @@ bnm は、モノレポやフルスタックアプリケーションなど、複�
 - `bnm list` でディレクトリ・スクリプト定義を**一覧表示**
 - **クロスプラットフォーム**対応（Windows / macOS / Linux）
 - `.env` を自動読み込み（プロジェクトルート＋各ディレクトリ）し、タスク単位の `env` にも対応。`PROJECT_NAME` / `PROJECT_VERSION` を**環境変数として提供**
-- 各プロセスの出力をディレクトリ名で**色分けプレフィックス表示**
-- **実行サマリー** — スクリプト実行後にタスクごとの成否と所要時間を表示
+- 各プロセスの出力をディレクトリ名で**色分けプレフィックス表示**(`--no-color` / `NO_COLOR` で無効化可能)
+- **タスク別ログファイル** — `--log-dir logs` で各タスクの出力を個別ファイルにも書き出し
+- **実行サマリー** — スクリプト実行後にタスクごとの成否と所要時間を表示。JSON 出力(`--summary json`)にも対応
 - **シェル補完** — `bnm completion bash|zsh|fish`、typo 時の「Did you mean ...?」サジェスト付き
 - **エディタ対応** — `bnm.json` の [JSON Schema](schema/bnm.schema.json) を公開（`bnm init` が `$schema` を自動付与）
 - **CI フレンドリー** — タスク失敗時は非ゼロ終了コード、直列モードは最初の失敗で停止
@@ -223,6 +224,22 @@ bnm dev -F --watch
 ```bash
 bnm deploy --dry-run
 ```
+
+**ログファイル出力** — `--log-dir <ディレクトリ>` を付けると、各タスクの出力(プレフィックス・色なし)を `<ディレクトリ>/<スクリプト>/<タスク>.log` にも書き出します。並列実行の出力を CI で追いやすくなります。ファイルは実行開始時に空にされ、リトライやウォッチモードの再実行では追記されます。
+
+```bash
+bnm test --log-dir logs   # → logs/test/FRONTEND.log、logs/test/BACKEND.log など
+```
+
+**JSON サマリー** — `--summary json` を付けると、サマリーの表の代わりに 1 行の JSON を出力します。CI からタスクごとの結果をパースできます:
+
+```bash
+$ bnm dev --summary json
+...
+{"script":"dev","ok":true,"tasks":[{"name":"FRONTEND","status":"ok","durationMs":812}]}
+```
+
+**色付き出力** — stdout が TTY でない場合や [`NO_COLOR`](https://no-color.org/) 環境変数が設定されている場合、色は自動的に無効になります。`--no-color` で強制的に無効化することもできます。
 
 スクリプトに `dependsOn` がある場合、それらのスクリプトが先に最後まで実行されます（[スクリプトグループ](#スクリプトグループ)参照）。
 

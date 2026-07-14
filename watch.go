@@ -32,7 +32,7 @@ var watchIgnoreDirs = map[string]bool{
 
 // runScriptWatch runs the script, then reruns it whenever a file under any
 // task directory changes. It returns when ctx is canceled (Ctrl+C).
-func runScriptWatch(ctx context.Context, config *Config, order []string, tasksByScript map[string][]Task, targetScript string, sharedEnv []string) {
+func runScriptWatch(ctx context.Context, config *Config, order []string, tasksByScript map[string][]Task, targetScript string, sharedEnv []string, opts scriptOptions) {
 	roots := watchRoots(tasksByScript)
 	changes, count, err := watchChanges(ctx, roots)
 	if err != nil {
@@ -45,7 +45,7 @@ func runScriptWatch(ctx context.Context, config *Config, order []string, tasksBy
 		runCtx, cancelRun := context.WithCancel(ctx)
 		done := make(chan struct{})
 		go func() {
-			runScriptOnce(runCtx, config, order, tasksByScript, targetScript, sharedEnv)
+			runScriptOnce(runCtx, config, order, tasksByScript, targetScript, sharedEnv, opts)
 			close(done)
 		}()
 

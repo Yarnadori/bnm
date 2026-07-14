@@ -36,6 +36,7 @@ type Directory struct {
 
 type Task struct {
 	Name    string            `json:"-"`
+	LogPath string            `json:"-"`
 	Dir     string            `json:"dir,omitempty"`
 	Command Command           `json:"command"`
 	Env     map[string]string `json:"env,omitempty"`

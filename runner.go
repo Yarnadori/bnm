@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -30,8 +31,11 @@ const (
 )
 
 type scriptOptions struct {
-	Watch  bool
-	DryRun bool
+	Watch   bool
+	DryRun  bool
+	NoColor bool
+	LogDir  string
+	Summary string // "" or "text" for the table, "json" for machine-readable output
 }
 
 func runScript(targetScript string, filters []string, extraArgs []string, opts scriptOptions) {
@@ -76,9 +80,20 @@ func runScript(targetScript string, filters []string, extraArgs []string, opts s
 		tasksByScript[name] = resolved
 	}
 
+	if opts.NoColor {
+		colorEnabled = false
+	}
+
 	if opts.DryRun {
 		printPlan(config, order, tasksByScript, targetScript)
 		return
+	}
+
+	if opts.LogDir != "" {
+		if err := assignLogPaths(opts.LogDir, order, tasksByScript); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -97,14 +112,14 @@ func runScript(targetScript string, filters []string, extraArgs []string, opts s
 	sharedEnv := buildEnv(config)
 
 	if opts.Watch {
-		runScriptWatch(ctx, config, order, tasksByScript, targetScript, sharedEnv)
+		runScriptWatch(ctx, config, order, tasksByScript, targetScript, sharedEnv, opts)
 		if interrupted.Load() {
 			os.Exit(130)
 		}
 		return
 	}
 
-	failed := runScriptOnce(ctx, config, order, tasksByScript, targetScript, sharedEnv)
+	failed := runScriptOnce(ctx, config, order, tasksByScript, targetScript, sharedEnv, opts)
 
 	if interrupted.Load() {
 		os.Exit(130)
@@ -114,9 +129,56 @@ func runScript(targetScript string, filters []string, extraArgs []string, opts s
 	}
 }
 
+// assignLogPaths gives every task a log file under logDir/<script>/, creating
+// the directories and truncating files left over from earlier invocations.
+// Task names are deduplicated within a script so no file is shared.
+func assignLogPaths(logDir string, order []string, tasksByScript map[string][]Task) error {
+	for _, name := range order {
+		scriptDir := filepath.Join(logDir, sanitizeLogName(name))
+		if len(tasksByScript[name]) > 0 {
+			if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+				return fmt.Errorf("failed to create log directory: %w", err)
+			}
+		}
+		used := map[string]int{}
+		for i := range tasksByScript[name] {
+			t := &tasksByScript[name][i]
+			base := sanitizeLogName(t.Name)
+			used[base]++
+			if n := used[base]; n > 1 {
+				base = fmt.Sprintf("%s-%d", base, n)
+			}
+			t.LogPath = filepath.Join(scriptDir, base+".log")
+			if err := os.WriteFile(t.LogPath, nil, 0o644); err != nil {
+				return fmt.Errorf("failed to create log file: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// sanitizeLogName maps a task or script name to a safe file name.
+func sanitizeLogName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	s := strings.Trim(b.String(), "._")
+	if s == "" {
+		return "root"
+	}
+	return s
+}
+
 // runScriptOnce runs the resolved scripts in order and prints the summary.
 // It reports whether any task failed.
-func runScriptOnce(ctx context.Context, config *Config, order []string, tasksByScript map[string][]Task, targetScript string, sharedEnv []string) bool {
+func runScriptOnce(ctx context.Context, config *Config, order []string, tasksByScript map[string][]Task, targetScript string, sharedEnv []string, opts scriptOptions) bool {
 	var results []taskResult
 	failed := false
 	for i, name := range order {
@@ -152,8 +214,35 @@ func runScriptOnce(ctx context.Context, config *Config, order []string, tasksByS
 	}
 
 	fmt.Println("[bnm] All tasks have finished.")
-	printSummary(results)
+	if opts.Summary == "json" {
+		fmt.Println(string(summaryJSON(targetScript, results, failed)))
+	} else {
+		printSummary(results)
+	}
 	return failed
+}
+
+// summaryJSON renders the run summary as a single-line JSON object.
+func summaryJSON(script string, results []taskResult, failed bool) []byte {
+	type jsonTask struct {
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		DurationMs int64  `json:"durationMs"`
+	}
+	out := struct {
+		Script string     `json:"script"`
+		OK     bool       `json:"ok"`
+		Tasks  []jsonTask `json:"tasks"`
+	}{Script: script, OK: !failed, Tasks: make([]jsonTask, 0, len(results))}
+	for _, r := range results {
+		out.Tasks = append(out.Tasks, jsonTask{
+			Name:       r.Name,
+			Status:     r.Status,
+			DurationMs: r.Duration.Milliseconds(),
+		})
+	}
+	b, _ := json.Marshal(out)
+	return b
 }
 
 // printPlan shows what a script run would execute, without running anything.

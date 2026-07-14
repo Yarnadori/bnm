@@ -28,8 +28,9 @@ bnm is a task runner designed to streamline command execution and script managem
 - **List** configured directories and scripts with `bnm list`
 - **Cross-platform** command support (Windows / macOS / Linux)
 - **Environment variables** — loads `.env` automatically (project root and per-directory), supports per-task `env`, and exposes `PROJECT_NAME` / `PROJECT_VERSION`
-- **Prefixed, color-coded output** — each process output is labeled with its directory name
-- **Run summary** — per-task status and duration after every script run
+- **Prefixed, color-coded output** — each process output is labeled with its directory name (`--no-color` / `NO_COLOR` to disable)
+- **Per-task log files** — `--log-dir logs` writes each task's output to its own file
+- **Run summary** — per-task status and duration after every script run, also available as JSON (`--summary json`)
 - **Shell completion** — `bnm completion bash|zsh|fish`, plus "Did you mean ...?" typo suggestions
 - **Editor support** — published [JSON Schema](schema/bnm.schema.json) for `bnm.json` (`bnm init` adds `$schema` automatically)
 - **CI-friendly** — non-zero exit code on failure; sequential scripts stop at the first failing task
@@ -223,6 +224,22 @@ bnm dev -F --watch
 ```bash
 bnm deploy --dry-run
 ```
+
+**Log files** — `--log-dir <dir>` also writes each task's output (without prefixes or colors) to `<dir>/<script>/<task>.log`, which makes parallel output easy to inspect in CI. Files are truncated at the start of each invocation; retries and watch-mode reruns append.
+
+```bash
+bnm test --log-dir logs   # → logs/test/FRONTEND.log, logs/test/BACKEND.log, ...
+```
+
+**JSON summary** — `--summary json` replaces the summary table with a single JSON line, so CI can parse per-task results:
+
+```bash
+$ bnm dev --summary json
+...
+{"script":"dev","ok":true,"tasks":[{"name":"FRONTEND","status":"ok","durationMs":812}]}
+```
+
+**Colors** — output colors are disabled automatically when stdout is not a TTY or the [`NO_COLOR`](https://no-color.org/) environment variable is set; `--no-color` forces them off.
 
 If the script has `dependsOn`, those scripts run to completion first (see [Script group](#script-group)).
 
