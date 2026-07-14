@@ -288,6 +288,31 @@ func TestSanitizeLogName(t *testing.T) {
 	}
 }
 
+func TestUniquePathCaseFold(t *testing.T) {
+	orig := logPathFold
+	t.Cleanup(func() { logPathFold = orig })
+
+	// Case-insensitive filesystems (Windows, default macOS): A and a collide
+	logPathFold = true
+	used := map[string]bool{}
+	if got := uniquePath(used, "A", ".log"); got != "A.log" {
+		t.Errorf("got %q, want A.log", got)
+	}
+	if got := uniquePath(used, "a", ".log"); got != "a-2.log" {
+		t.Errorf("got %q, want a-2.log", got)
+	}
+
+	// Case-sensitive filesystems: they are distinct files
+	logPathFold = false
+	used = map[string]bool{}
+	if got := uniquePath(used, "A", ".log"); got != "A.log" {
+		t.Errorf("got %q, want A.log", got)
+	}
+	if got := uniquePath(used, "a", ".log"); got != "a.log" {
+		t.Errorf("got %q, want a.log", got)
+	}
+}
+
 func TestSummaryJSON(t *testing.T) {
 	results := []taskResult{
 		{Name: "FRONTEND", Status: statusOK, Duration: 1500 * time.Millisecond},
@@ -326,6 +351,47 @@ func TestAssignLogPaths(t *testing.T) {
 		if _, err := os.Stat(w); err != nil {
 			t.Errorf("log file %q was not created: %v", w, err)
 		}
+	}
+}
+
+func TestAssignLogPathsCollisions(t *testing.T) {
+	logDir := t.TempDir()
+	// Task names A, A, A-2 must not share a file, and the sanitized script
+	// names a/b and a_b must not share a directory.
+	tasksByScript := map[string][]Task{
+		"a/b": {
+			{Name: "A", Command: "echo 1"},
+			{Name: "A", Command: "echo 2"},
+			{Name: "A-2", Command: "echo 3"},
+		},
+		"a_b": {
+			{Name: "A", Command: "echo 4"},
+		},
+	}
+	if err := assignLogPaths(logDir, []string{"a/b", "a_b"}, tasksByScript); err != nil {
+		t.Fatalf("assignLogPaths failed: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, tasks := range tasksByScript {
+		for _, task := range tasks {
+			if seen[task.LogPath] {
+				t.Errorf("log path %q assigned twice", task.LogPath)
+			}
+			seen[task.LogPath] = true
+		}
+	}
+	want := []string{
+		filepath.Join(logDir, "a_b", "A.log"),
+		filepath.Join(logDir, "a_b", "A-2.log"),
+		filepath.Join(logDir, "a_b", "A-2-2.log"),
+	}
+	for i, w := range want {
+		if got := tasksByScript["a/b"][i].LogPath; got != w {
+			t.Errorf("a/b task %d: got %q, want %q", i, got, w)
+		}
+	}
+	if got, w := tasksByScript["a_b"][0].LogPath, filepath.Join(logDir, "a_b-2", "A.log"); got != w {
+		t.Errorf("a_b task: got %q, want %q", got, w)
 	}
 }
 

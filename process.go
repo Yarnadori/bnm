@@ -111,19 +111,43 @@ func exitCodeOf(err error) int {
 }
 
 // prefixLogger copies lines from r to w with a colored name prefix. When
-// logW is non-nil, the raw lines are also written there.
+// logW is non-nil, the bytes are also written there verbatim, preserving
+// the original line structure. The pipe is always drained to the end so the
+// child never blocks on a full pipe buffer, and memory stays bounded: a
+// line longer than the read buffer is displayed as multiple prefixed chunks
+// instead of being accumulated.
 func prefixLogger(name string, r io.Reader, w io.Writer, logW io.Writer) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	reader := bufio.NewReaderSize(r, 64*1024)
 	pre, reset := colorFor(name)
-	for scanner.Scan() {
-		fmt.Fprintf(w, "%s[%s]%s %s\n", pre, name, reset, scanner.Text())
-		if logW != nil {
-			fmt.Fprintln(logW, scanner.Text())
-		}
+	printLine := func(line string) {
+		fmt.Fprintf(w, "%s[%s]%s %s\n", pre, name, reset, line)
 	}
-	// fs.ErrClosed happens when the pipe is force-closed on shutdown; not worth reporting
-	if err := scanner.Err(); err != nil && !errors.Is(err, fs.ErrClosed) {
-		fmt.Fprintf(w, "%s[%s]%s [bnm] output stream error: %v\n", pre, name, reset, err)
+	midLine := false
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if logW != nil && len(chunk) > 0 {
+			logW.Write(chunk)
+		}
+		line := string(chunk)
+		if err == bufio.ErrBufferFull {
+			printLine(line)
+			midLine = true
+			continue
+		}
+		line = strings.TrimSuffix(line, "\n")
+		line = strings.TrimSuffix(line, "\r")
+		// Skip the empty remainder that just terminates a chunked line,
+		// but keep genuine empty lines.
+		if line != "" || (err == nil && !midLine) {
+			printLine(line)
+		}
+		midLine = false
+		if err != nil {
+			// fs.ErrClosed happens when the pipe is force-closed on shutdown; not worth reporting
+			if err != io.EOF && !errors.Is(err, fs.ErrClosed) {
+				fmt.Fprintf(w, "%s[%s]%s [bnm] output stream error: %v\n", pre, name, reset, err)
+			}
+			return
+		}
 	}
 }

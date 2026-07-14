@@ -131,30 +131,48 @@ func runScript(targetScript string, filters []string, extraArgs []string, opts s
 
 // assignLogPaths gives every task a log file under logDir/<script>/, creating
 // the directories and truncating files left over from earlier invocations.
-// Task names are deduplicated within a script so no file is shared.
+// Sanitized names can collide (both across scripts and across tasks), so
+// uniqueness is enforced on the final paths, not the original names.
 func assignLogPaths(logDir string, order []string, tasksByScript map[string][]Task) error {
+	usedDirs := map[string]bool{}
 	for _, name := range order {
-		scriptDir := filepath.Join(logDir, sanitizeLogName(name))
+		scriptDir := uniquePath(usedDirs, filepath.Join(logDir, sanitizeLogName(name)), "")
 		if len(tasksByScript[name]) > 0 {
 			if err := os.MkdirAll(scriptDir, 0o755); err != nil {
 				return fmt.Errorf("failed to create log directory: %w", err)
 			}
 		}
-		used := map[string]int{}
+		usedFiles := map[string]bool{}
 		for i := range tasksByScript[name] {
 			t := &tasksByScript[name][i]
-			base := sanitizeLogName(t.Name)
-			used[base]++
-			if n := used[base]; n > 1 {
-				base = fmt.Sprintf("%s-%d", base, n)
-			}
-			t.LogPath = filepath.Join(scriptDir, base+".log")
+			t.LogPath = uniquePath(usedFiles, filepath.Join(scriptDir, sanitizeLogName(t.Name)), ".log")
 			if err := os.WriteFile(t.LogPath, nil, 0o644); err != nil {
 				return fmt.Errorf("failed to create log file: %w", err)
 			}
 		}
 	}
 	return nil
+}
+
+// logPathFold makes log-path deduplication case-insensitive on filesystems
+// that are (Windows, default macOS), where A.log and a.log are one file.
+var logPathFold = runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+
+// uniquePath returns base+ext, or base-N+ext for the smallest N that is not
+// in used yet, and records the result in used.
+func uniquePath(used map[string]bool, base, ext string) string {
+	key := func(s string) string {
+		if logPathFold {
+			return strings.ToLower(s)
+		}
+		return s
+	}
+	path := base + ext
+	for n := 2; used[key(path)]; n++ {
+		path = fmt.Sprintf("%s-%d%s", base, n, ext)
+	}
+	used[key(path)] = true
+	return path
 }
 
 // sanitizeLogName maps a task or script name to a safe file name.

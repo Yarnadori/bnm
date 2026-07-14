@@ -34,7 +34,13 @@ var watchIgnoreDirs = map[string]bool{
 // task directory changes. It returns when ctx is canceled (Ctrl+C).
 func runScriptWatch(ctx context.Context, config *Config, order []string, tasksByScript map[string][]Task, targetScript string, sharedEnv []string, opts scriptOptions) {
 	roots := watchRoots(tasksByScript)
-	changes, count, err := watchChanges(ctx, roots)
+	// The log directory must not be watched: tasks write to it while running,
+	// and reacting to those writes would restart the script forever.
+	ignore := ""
+	if opts.LogDir != "" {
+		ignore, _ = filepath.Abs(opts.LogDir)
+	}
+	changes, count, err := watchChanges(ctx, roots, ignore)
 	if err != nil {
 		fmt.Printf("Error: failed to start file watcher: %v\n", err)
 		os.Exit(1)
@@ -94,8 +100,9 @@ func watchRoots(tasksByScript map[string][]Task) []string {
 
 // watchChanges watches the given roots recursively and delivers one signal
 // per debounced burst of file events. It also reports how many directories
-// are being watched.
-func watchChanges(ctx context.Context, roots []string) (<-chan struct{}, int, error) {
+// are being watched. ignore is an absolute path (or "") whose subtree is
+// excluded from watching and from events.
+func watchChanges(ctx context.Context, roots []string, ignore string) (<-chan struct{}, int, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, 0, err
@@ -103,7 +110,7 @@ func watchChanges(ctx context.Context, roots []string) (<-chan struct{}, int, er
 
 	count := 0
 	for _, root := range roots {
-		count += watchTree(watcher, root)
+		count += watchTree(watcher, root, ignore)
 	}
 
 	changes := make(chan struct{}, 1)
@@ -122,10 +129,13 @@ func watchChanges(ctx context.Context, roots []string) (<-chan struct{}, int, er
 				if ev.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) == 0 {
 					continue
 				}
+				if underPath(ev.Name, ignore) {
+					continue
+				}
 				// Watch directories created while running
 				if ev.Op&fsnotify.Create != 0 {
 					if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
-						watchTree(watcher, ev.Name)
+						watchTree(watcher, ev.Name, ignore)
 					}
 				}
 				if timer == nil {
@@ -151,8 +161,9 @@ func watchChanges(ctx context.Context, roots []string) (<-chan struct{}, int, er
 }
 
 // watchTree adds root and its subdirectories to the watcher, skipping
-// ignored and hidden directories. It returns how many were added.
-func watchTree(watcher *fsnotify.Watcher, root string) int {
+// ignored and hidden directories and the ignore subtree. It returns how
+// many were added.
+func watchTree(watcher *fsnotify.Watcher, root string, ignore string) int {
 	count := 0
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || !d.IsDir() {
@@ -161,10 +172,30 @@ func watchTree(watcher *fsnotify.Watcher, root string) int {
 		if path != root && (watchIgnoreDirs[d.Name()] || strings.HasPrefix(d.Name(), ".")) {
 			return filepath.SkipDir
 		}
+		if underPath(path, ignore) {
+			return filepath.SkipDir
+		}
 		if watcher.Add(path) == nil {
 			count++
 		}
 		return nil
 	})
 	return count
+}
+
+// underPath reports whether path is dir itself or inside it. dir must be
+// absolute; an empty dir matches nothing.
+func underPath(path, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(dir, abs)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }

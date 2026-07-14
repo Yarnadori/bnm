@@ -41,6 +41,19 @@ func TestCommandUnmarshalDefaultFallback(t *testing.T) {
 	}
 }
 
+func TestCommandUnmarshalInvalidType(t *testing.T) {
+	for _, data := range []string{
+		`{"command": 123}`,
+		`{"command": ["echo", "hi"]}`,
+		`{"command": {"linux": 123}}`,
+	} {
+		var task Task
+		if err := json.Unmarshal([]byte(data), &task); err == nil {
+			t.Errorf("unmarshal %s: expected error", data)
+		}
+	}
+}
+
 func TestCommandUnmarshalNoMatch(t *testing.T) {
 	data := []byte(`{"command": {"someother-os": "echo other"}}`)
 	var task Task

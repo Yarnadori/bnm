@@ -88,7 +88,7 @@ func (c *Command) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	return nil
+	return fmt.Errorf("command must be a string or an object mapping OS names to strings")
 }
 
 func (c Command) String() string {

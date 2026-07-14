@@ -10,20 +10,58 @@ import (
 )
 
 func TestPrefixLoggerLongLines(t *testing.T) {
-	// Lines longer than bufio.Scanner's 64KB default must not be dropped
-	longLine := strings.Repeat("a", 100*1024)
-	var out strings.Builder
-	prefixLogger("TEST", strings.NewReader(longLine+"\nshort\n"), &out, nil)
+	// A line longer than the read buffer is displayed as multiple prefixed
+	// chunks so memory stays bounded, with no byte dropped and the pipe
+	// drained to the end. The log writer must receive the original bytes
+	// unsplit.
+	longLine := strings.Repeat("a", 2*1024*1024)
+	input := longLine + "\nshort\n"
+	var out, log strings.Builder
+	prefixLogger("TEST", strings.NewReader(input), &out, &log)
+
+	if log.String() != input {
+		t.Errorf("log content was altered (got %d bytes, want %d)", log.Len(), len(input))
+	}
 
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("got %d lines, want 2:\n%s", len(lines), out.String())
+	if len(lines) < 2 {
+		t.Fatalf("got %d lines, want at least 2", len(lines))
 	}
-	if !strings.HasPrefix(lines[0], "[TEST] ") || len(lines[0]) != len("[TEST] ")+100*1024 {
-		t.Errorf("long line was truncated or mangled (len=%d)", len(lines[0]))
+	var joined strings.Builder
+	for _, line := range lines[:len(lines)-1] {
+		content, ok := strings.CutPrefix(line, "[TEST] ")
+		if !ok {
+			t.Fatalf("line without prefix: %.40q", line)
+		}
+		joined.WriteString(content)
 	}
-	if lines[1] != "[TEST] short" {
-		t.Errorf("got %q, want %q", lines[1], "[TEST] short")
+	if joined.String() != longLine {
+		t.Errorf("long line was truncated or mangled (got %d bytes, want %d)", joined.Len(), len(longLine))
+	}
+	if lines[len(lines)-1] != "[TEST] short" {
+		t.Errorf("got %q, want %q", lines[len(lines)-1], "[TEST] short")
+	}
+}
+
+func TestPrefixLoggerNoTrailingNewline(t *testing.T) {
+	var out, log strings.Builder
+	prefixLogger("TEST", strings.NewReader("partial"), &out, &log)
+	if out.String() != "[TEST] partial\n" {
+		t.Errorf("got %q", out.String())
+	}
+	if log.String() != "partial" {
+		t.Errorf("log: got %q, want %q", log.String(), "partial")
+	}
+}
+
+func TestPrefixLoggerKeepsEmptyLines(t *testing.T) {
+	var out, log strings.Builder
+	prefixLogger("TEST", strings.NewReader("a\n\nb\n"), &out, &log)
+	if out.String() != "[TEST] a\n[TEST] \n[TEST] b\n" {
+		t.Errorf("got %q", out.String())
+	}
+	if log.String() != "a\n\nb\n" {
+		t.Errorf("log: got %q", log.String())
 	}
 }
 
