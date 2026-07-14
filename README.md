@@ -7,34 +7,37 @@
 [![Release](https://img.shields.io/github/v/release/Yarnadori/bnm)](https://github.com/Yarnadori/bnm/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-bnm is a task runner designed to streamline command execution and script management in projects with multiple directories, such as monorepos or full-stack applications.
+**bnm is a lightweight task runner for running commands across multiple directories, regardless of language or package manager.**
 
----
+Describe your tasks in one small JSON file:
 
-## Features
+```json
+{
+  "scripts": {
+    "dev": {
+      "frontend": "npm run dev",
+      "backend": "go run ."
+    }
+  }
+}
+```
 
-- **Initialize** a project with auto-detected subdirectories
-- **Sync directories** in `bnm.json` when project folders are added or removed
-- **Run scripts** defined in `bnm.json` in parallel or sequential mode
-- **Script dependencies** — `dependsOn` runs prerequisite scripts first (cycles are rejected)
-- **Directory filters** — `bnm dev -F` runs only the tasks of the given directories
-- **Pass-through arguments** — `bnm dev -- --port 3000` appends extra args to every task command
-- **Watch mode** — `bnm dev --watch` reruns the script when files in task directories change
-- **Dry run** — `bnm deploy --dry-run` shows the execution plan without running anything
-- **Timeouts & retries** — per-task `timeout` kills slow tasks, `retries` reruns flaky ones
-- **Config validation** — `bnm check` catches broken paths, aliases, and dependencies before anything runs
-- **Concurrency limit** — `maxParallel` caps how many tasks run at once
-- **Execute arbitrary commands** in any configured directory via alias or path, or in all of them with `exec --all`
-- **List** configured directories and scripts with `bnm list`
-- **Cross-platform** command support (Windows / macOS / Linux)
-- **Environment variables** — loads `.env` automatically (project root and per-directory), supports per-task `env`, and exposes `PROJECT_NAME` / `PROJECT_VERSION`
-- **Prefixed, color-coded output** — each process output is labeled with its directory name (`--no-color` / `NO_COLOR` to disable)
-- **Per-task log files** — `--log-dir logs` writes each task's output to its own file
-- **Run summary** — per-task status and duration after every script run, also available as JSON (`--summary json`)
-- **Shell completion** — `bnm completion bash|zsh|fish`, plus "Did you mean ...?" typo suggestions
-- **Editor support** — published [JSON Schema](schema/bnm.schema.json) for `bnm.json` (`bnm init` adds `$schema` automatically)
-- **CI-friendly** — non-zero exit code on failure; sequential scripts stop at the first failing task
-- **Clean shutdown** — Ctrl+C terminates the whole process tree of every task
+Run them all at once:
+
+```bash
+$ bnm dev
+[frontend] $ npm run dev
+[backend]  $ go run .
+```
+
+That's it — both processes run in parallel with color-coded output, and Ctrl+C shuts down the whole tree cleanly.
+
+## When to use bnm
+
+- You want to start `frontend` and `backend` (and more) with one command
+- Your project mixes Node.js, Go, Python, Rust, ... — bnm doesn't care
+- A full monorepo build system (Turborepo, Bazel, Nx) is more than you need
+- You want tasks in a single, simple JSON file that anyone can read
 
 ---
 
@@ -81,169 +84,73 @@ go build -o bnm .
 
 ## Getting Started
 
-### 1. Initialize
+Run `bnm init` in your project root. It scans subdirectories, asks which ones to include, and suggests commands based on what it finds (`package.json`, `go.mod`, `Cargo.toml`, ...):
 
-Run `bnm init` in your project root. bnm scans subdirectories automatically and generates `bnm.json`.
+```
+$ bnm init
+Include 'frontend'? [Y/n]:
+Include 'backend'? [Y/n]:
+Detected package.json in frontend.
+Use "npm run dev" for the dev task? [Y/n]:
+Detected go.mod in backend.
+Use "go run ." for the dev task? [Y/n]:
+Created bnm.json with 2 directories.
+```
+
+Non-interactive environments (CI, scripts) can skip the questions:
 
 ```bash
-bnm init
+bnm init --yes                        # accept all defaults
+bnm init --include frontend,backend   # only these directories
+bnm init --exclude docs,tmp           # everything except these
+bnm init --dry-run                    # print the config without writing it
 ```
 
-**Example — project with `frontend/` and `backend/` directories:**
+`bnm init` never overwrites an existing `bnm.json`; use `--force` to replace it (a `bnm.json.bak` backup is written first), or `bnm sync` to just update the directory list.
 
-```json
-{
-  "name": "my-app",
-  "version": "0.0.0",
-  "directories": {
-    "BACKEND": {
-      "alias": "B",
-      "path": "./backend"
-    },
-    "FRONTEND": {
-      "alias": "F",
-      "path": "./frontend"
-    }
-  },
-  "scripts": {}
-}
-```
-
-### 2. Define Scripts
-
-Add scripts to `bnm.json`:
-
-```json
-{
-  "name": "my-app",
-  "version": "1.0.0",
-  "directories": {
-    "FRONTEND": { "alias": "F", "path": "./frontend" },
-    "BACKEND": { "alias": "B", "path": "./backend" }
-  },
-  "scripts": {
-    "dev": {
-      "mode": "parallel",
-      "tasks": [
-        { "dir": "FRONTEND", "command": "npm run dev" },
-        { "dir": "BACKEND", "command": "npm run dev" }
-      ]
-    },
-    "build": {
-      "mode": "sequential",
-      "tasks": [
-        { "dir": "FRONTEND", "command": "npm run build" },
-        { "dir": "BACKEND", "command": "npm run build" }
-      ]
-    }
-  }
-}
-```
-
-### 3. Run Scripts
+Then run your scripts:
 
 ```bash
-bnm dev    # runs all "dev" tasks in parallel
-bnm build  # runs all "build" tasks sequentially
+bnm dev                # every task of "dev", in parallel
+bnm dev frontend       # only the frontend task
+bnm test -- --verbose  # append arguments to every task command
 ```
 
 ---
 
 ## Commands
 
-### `bnm init`
-
-Initializes the project by creating `bnm.json` in the current directory. Subdirectories are scanned automatically. Hidden directories (`.git`, etc.) and dependency/build directories (`node_modules`, `dist`, `build`, `vendor`, etc.) are excluded.
-
-### `bnm sync`
-
-Updates the `directories` section in `bnm.json` to match the current subdirectories. Existing aliases are kept for unchanged directories, new directories get generated aliases, and removed directories are deleted from `directories`.
-
-### `bnm check`
-
-Validates `bnm.json` and exits non-zero if anything is wrong: JSON syntax, `mode` / `maxParallel` / `timeout` / `retries` values, `dependsOn` references and cycles, directory paths that don't exist on disk, duplicate aliases, task `dir` entries that resolve nowhere, and tasks with no command for the current OS. Useful as an early step in CI.
-
-```bash
-$ bnm check
-[bnm] Found 2 problem(s) in bnm.json:
-  - directory 'FRONTEND': path './frontend' does not exist
-  - script 'dev' task 2: no command for this OS (linux)
-```
-
-### `bnm list`
-
-Shows the directories and scripts defined in `bnm.json`. Alias: `bnm ls`.
-
-```bash
-$ bnm list
-my-app v1.0.0
-
-Directories:
-  BACKEND      -B  ./backend
-  FRONTEND     -F  ./frontend
-
-Scripts:
-  dev (parallel)
-    FRONTEND     npm run dev
-    BACKEND      npm run dev
-```
-
-### `bnm <script> [dir...] [-- args...]`
+### `bnm <script> [dir...] [options] [-- args...]`
 
 Runs a script defined in `bnm.json`.
 
-```bash
-bnm dev
-bnm build
-```
-
-**Directory filters** — run only the tasks of specific directories (alias with `-`, directory key, or path):
+**Directory filters** — positional names run only the matching tasks. A name is a `directories` key, its alias, or a path; `--filter` / `-F` is the explicit equivalent and can repeat:
 
 ```bash
-bnm dev -F                # only the FRONTEND task
-bnm dev FRONTEND BACKEND  # multiple directories
+bnm dev frontend backend
+bnm dev --filter frontend -F backend
 bnm dev ./frontend        # by path, and '.' matches root tasks
 ```
 
 **Pass-through arguments** — everything after `--` is appended to every task command of the script (dependencies are not affected):
 
 ```bash
-bnm test -- --watch
-bnm dev -F -- --port 3000
+bnm dev -F frontend -- --port 3000
 ```
 
 **Watch mode** — `--watch` (or `-w`) reruns the script whenever a file under any task directory changes. Running tasks are terminated and restarted, so it also works with dev servers. Hidden directories and dependency/build directories (`node_modules`, `dist`, `target`, etc.) are ignored. Stop with Ctrl+C.
 
-```bash
-bnm test --watch
-bnm dev -F --watch
-```
+**Dry run** — `--dry-run` (or `-n`) prints the execution plan (order, mode, resolved directories, and commands, including dependencies and filters) without running anything.
 
-**Dry run** — `--dry-run` (or `-n`) prints the execution plan (order, mode, resolved directories, and commands, including dependencies and filters) without running anything:
-
-```bash
-bnm deploy --dry-run
-```
-
-**Log files** — `--log-dir <dir>` also writes each task's output (without prefixes or colors) to `<dir>/<script>/<task>.log`, which makes parallel output easy to inspect in CI. Files are truncated at the start of each invocation; retries and watch-mode reruns append.
-
-```bash
-bnm test --log-dir logs   # → logs/test/FRONTEND.log, logs/test/BACKEND.log, ...
-```
+**Log files** — `--log-dir <dir>` also writes each task's output (without prefixes or colors) to `<dir>/<script>/<task>.log`. Files are truncated at the start of each invocation; retries and watch-mode reruns append.
 
 **JSON summary** — `--summary json` replaces the summary table with a single JSON line, so CI can parse per-task results:
 
-```bash
-$ bnm dev --summary json
-...
-{"script":"dev","ok":true,"tasks":[{"name":"FRONTEND","status":"ok","durationMs":812}]}
+```json
+{"script":"dev","ok":true,"tasks":[{"name":"frontend","status":"ok","durationMs":812}]}
 ```
 
-**Colors** — output colors are disabled automatically when stdout is not a TTY or the [`NO_COLOR`](https://no-color.org/) environment variable is set; `--no-color` forces them off.
-
-If the script has `dependsOn`, those scripts run to completion first (see [Script group](#script-group)).
-
-After the run, bnm prints a summary with per-task status (`ok` / `failed` / `skipped` / `canceled`) and duration.
+**Colors** — disabled automatically when stdout is not a TTY or [`NO_COLOR`](https://no-color.org/) is set; `--no-color` forces them off.
 
 Exit code behavior:
 
@@ -252,28 +159,45 @@ Exit code behavior:
 - bnm exits with a non-zero code if any task fails, so scripts are safe to use in CI.
 - Note: script names that collide with built-in commands (`init`, `sync`, `list`, `ls`, `check`, `exec`, `completion`, `help`, `version`) cannot be invoked this way.
 
-### `bnm exec <dir> <command...>`
+### `bnm init`
 
-Executes an arbitrary command in a specific directory.
+Creates `bnm.json` interactively (see [Getting Started](#getting-started)). Flags: `--yes`, `--force`, `--dry-run`, `--include a,b`, `--exclude a,b`.
+
+### `bnm sync`
+
+Updates the `directories` section in `bnm.json` to match the current subdirectories. Existing entries are kept for unchanged paths, new directories are added, and removed directories are deleted.
+
+### `bnm check`
+
+Validates `bnm.json` and exits non-zero if anything is wrong: JSON syntax, `mode` / `maxParallel` / `timeout` / `retries` values, `dependsOn` references and cycles, directory paths that don't exist on disk, duplicate aliases, task directories that resolve nowhere, and tasks with no command for the current OS. Useful as an early step in CI.
 
 ```bash
-# By alias (prefix with -)
-bnm exec -F npm install
+$ bnm check
+[bnm] Found 2 problem(s) in bnm.json:
+  - directory 'frontend': path './frontend' does not exist
+  - script 'dev' task 2: no command for this OS (linux)
+```
 
-# By directory name
-bnm exec FRONTEND npm install
+### `bnm list`
 
-# By path
+Shows the directories and scripts defined in `bnm.json`. Alias: `bnm ls`.
+
+### `bnm exec <dir> <command...>`
+
+Executes an arbitrary command in a specific directory, addressed by name, alias, or path:
+
+```bash
+bnm exec frontend npm install
 bnm exec ./frontend npm install
+bnm exec . git status          # project root
 ```
 
 ### `bnm exec --all <command...>`
 
-Executes a command in every configured directory, one after another (sorted by directory key). Failures don't stop the remaining directories, but any failure makes bnm exit non-zero.
+Executes a command in every configured directory, one after another (sorted by name). Failures don't stop the remaining directories, but any failure makes bnm exit non-zero.
 
 ```bash
 bnm exec --all git status
-bnm exec --all npm install
 ```
 
 ### `bnm completion <bash|zsh|fish>`
@@ -293,65 +217,98 @@ bnm completion fish > ~/.config/fish/completions/bnm.fish
 
 ---
 
-## bnm.json Reference
-
-| Field         | Type   | Description                                            |
-| ------------- | ------ | ------------------------------------------------------ |
-| `$schema`     | string | Optional JSON Schema URL for editor validation         |
-| `name`        | string | Project name. Exposed as `PROJECT_NAME`                |
-| `version`     | string | Project version. Exposed as `PROJECT_VERSION`          |
-| `directories` | object | Named directory entries with alias and path            |
-| `scripts`     | object | Named script groups with mode, dependencies, and tasks |
+## Configuration
 
 A JSON Schema is published at [`schema/bnm.schema.json`](schema/bnm.schema.json); `bnm init` writes the `$schema` reference automatically so editors like VS Code validate and autocomplete `bnm.json`.
 
-### Directory entry
+### Scripts
 
-| Field   | Type   | Description                         |
-| ------- | ------ | ----------------------------------- |
-| `alias` | string | Short alias used with `bnm exec -X` |
-| `path`  | string | Relative path to the directory      |
-
-### Script group
-
-| Field         | Type    | Description                                                             |
-| ------------- | ------- | ----------------------------------------------------------------------- |
-| `mode`        | string  | `"parallel"` (default) or `"sequential"`                                 |
-| `dependsOn`   | array   | Scripts that run to completion before this one. Cycles are rejected     |
-| `maxParallel` | integer | Max tasks running at once in parallel mode. `0` or omitted is unlimited |
-| `tasks`       | array   | List of tasks to run                                                    |
+Most scripts are just a map from directory to command. Keys are `directories` names or plain paths (`./` optional, `.` is the project root), and tasks run in parallel by default:
 
 ```json
 {
   "scripts": {
-    "build": { "tasks": [{ "dir": "FRONTEND", "command": "npm run build" }] },
-    "deploy": {
-      "dependsOn": ["build"],
-      "tasks": [{ "dir": "BACKEND", "command": "npm run deploy" }]
+    "dev": {
+      "frontend": "npm run dev",
+      "backend": "go run ."
     }
   }
 }
 ```
 
-### Task
-
-| Field     | Type             | Description                                                                  |
-| --------- | ---------------- | ---------------------------------------------------------------------------- |
-| `dir`     | string           | Directory key from `directories`                                             |
-| `command` | string or object | Command to run. Can be OS-specific (see below)                               |
-| `env`     | object           | Extra environment variables applied only to this task                        |
-| `timeout` | string           | Per-attempt time limit (e.g. `"30s"`, `"2m"`). The task is killed when it elapses |
-| `retries` | integer          | How many times to rerun the task after a failure. Default `0`                |
+To run the same command in every configured directory, use a plain string:
 
 ```json
 {
-  "tasks": [
-    { "dir": "BACKEND", "command": "npm run test:e2e", "timeout": "5m", "retries": 2 }
-  ]
+  "scripts": {
+    "lint": "npx eslint ."
+  }
 }
 ```
 
+When you need more control — sequential order, dependencies, concurrency limits, or per-task settings — use the detailed form. Tasks stay keyed by directory and can carry `env`, `timeout`, and `retries`:
+
+```json
+{
+  "scripts": {
+    "test": {
+      "mode": "sequential",
+      "dependsOn": ["build"],
+      "maxParallel": 2,
+      "tasks": {
+        "frontend": {
+          "command": "npm test",
+          "timeout": "2m"
+        },
+        "backend": {
+          "command": "go test ./...",
+          "retries": 1,
+          "env": { "APP_ENV": "test" }
+        }
+      }
+    }
+  }
+}
+```
+
+| Script field  | Type    | Description                                                              |
+| ------------- | ------- | ------------------------------------------------------------------------ |
+| `mode`        | string  | `"parallel"` (default) or `"sequential"`                                  |
+| `dependsOn`   | array   | Scripts that run to completion before this one. Cycles are rejected      |
+| `maxParallel` | integer | Max tasks running at once in parallel mode. `0` or omitted is unlimited  |
+| `tasks`       | object  | Tasks keyed by directory (an array of `{dir, command, ...}` also works)  |
+
+| Task field | Type             | Description                                                                        |
+| ---------- | ---------------- | ---------------------------------------------------------------------------------- |
+| `command`  | string or object | Command to run. Can be OS-specific (see below)                                     |
+| `env`      | object           | Extra environment variables applied only to this task                              |
+| `timeout`  | string           | Per-attempt time limit (e.g. `"30s"`, `"2m"`). The task is killed when it elapses  |
+| `retries`  | integer          | How many times to rerun the task after a failure. Default `0`                      |
+
+### Directories
+
+`directories` is optional — script keys that aren't listed there are used as paths directly. Define it when you want short names for longer paths (the key doubles as the name for filters and `bnm exec`):
+
+```json
+{
+  "directories": {
+    "web": "./apps/frontend",
+    "api": "./services/backend"
+  },
+  "scripts": {
+    "dev": {
+      "web": "npm run dev",
+      "api": "go run ."
+    }
+  }
+}
+```
+
+The legacy `{"alias": ..., "path": ...}` object form is still accepted; its alias works as an alternative name.
+
 ### OS-specific commands
+
+Any `command` can be an object keyed by OS:
 
 ```json
 {
@@ -381,7 +338,23 @@ Each task additionally receives, in order of increasing precedence:
 2. `.env` in the task's directory (e.g. `frontend/.env`)
 3. The task's own `env` entries in `bnm.json`
 
-Set `NO_COLOR` to any value to disable colored output prefixes. Colors are also disabled automatically when output is not a terminal.
+---
+
+## All features at a glance
+
+- **Parallel & sequential** script execution with `dependsOn` dependencies and `maxParallel` limits
+- **Directory filters** — `bnm dev frontend` or `--filter` / `-F`
+- **Pass-through arguments** — `bnm dev -- --port 3000`
+- **Watch mode** — `--watch` reruns the script when files change
+- **Dry run** — `--dry-run` shows the execution plan
+- **Timeouts & retries** — per-task `timeout` kills slow tasks, `retries` reruns flaky ones
+- **Config validation** — `bnm check` catches broken paths and dependencies before anything runs
+- **Interactive init** — `bnm init` detects directories and suggests commands
+- **Prefixed, color-coded output** (`--no-color` / `NO_COLOR` to disable), plus per-task log files (`--log-dir`)
+- **Run summary** — per-task status and duration, also as JSON (`--summary json`)
+- **Cross-platform** commands (Windows / macOS / Linux) and `.env` support
+- **Shell completion** for bash / zsh / fish, with "Did you mean ...?" typo suggestions
+- **CI-friendly** — non-zero exit code on failure; **clean shutdown** — Ctrl+C terminates the whole process tree
 
 ---
 

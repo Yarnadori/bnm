@@ -10,7 +10,7 @@ var version = "dev"
 
 func printUsage() {
 	fmt.Println("Usage: bnm <command>")
-	fmt.Println("  init                         : Initialize (Creates bnm.json)")
+	fmt.Println("  init                         : Initialize (Creates bnm.json; see 'init --yes/--force/--dry-run/--include/--exclude')")
 	fmt.Println("  sync                         : Sync directories in bnm.json with current subdirectories")
 	fmt.Println("  list                         : List directories and scripts defined in bnm.json")
 	fmt.Println("  check                        : Validate bnm.json (paths, aliases, commands, dependencies)")
@@ -20,7 +20,8 @@ func printUsage() {
 	fmt.Println("  <script> [dir...] [-- args]  : Execute a script defined in bnm.json (e.g., dev)")
 	fmt.Println()
 	fmt.Println("Script options:")
-	fmt.Println("  <script> -F FRONTEND         : Run only tasks in the given directories (alias, key, or path)")
+	fmt.Println("  <script> frontend backend    : Run only tasks in the given directories (name, alias, or path)")
+	fmt.Println("  <script> --filter frontend   : Same as above; -F is the short form and can repeat")
 	fmt.Println("  <script> --watch             : Rerun the script when files in task directories change")
 	fmt.Println("  <script> --dry-run           : Show the execution plan without running anything")
 	fmt.Println("  <script> --log-dir DIR       : Also write each task's output to DIR/<script>/<task>.log")
@@ -50,7 +51,7 @@ func main() {
 		fmt.Println("bnm", version)
 
 	case "init":
-		initProject()
+		initProject(os.Args[2:])
 
 	case "sync":
 		syncProject()
@@ -69,7 +70,7 @@ func main() {
 		if len(os.Args) < 4 {
 			fmt.Println("Usage: bnm exec <dir or alias> <command...>")
 			fmt.Println("       bnm exec --all <command...>")
-			fmt.Println("Example: bnm exec -B pnpm add something")
+			fmt.Println("Example: bnm exec backend pnpm add something")
 			os.Exit(1)
 		}
 		taskName := os.Args[2]
@@ -132,6 +133,12 @@ func splitScriptArgs(args []string) (filters []string, extraArgs []string, opts 
 			return args[i], nil
 		}
 		switch name {
+		case "--filter", "-F":
+			v, err := takeValue()
+			if err != nil {
+				return nil, nil, opts, err
+			}
+			filters = append(filters, v)
 		case "--log-dir":
 			if opts.LogDir, err = takeValue(); err != nil {
 				return nil, nil, opts, err

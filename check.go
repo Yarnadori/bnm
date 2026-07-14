@@ -32,6 +32,12 @@ func runCheck() {
 func checkConfig(config *Config) []string {
 	var problems []string
 
+	keys := map[string]string{}
+	paths := map[string]string{}
+	for _, key := range sortedKeys(config.Directories) {
+		keys[strings.ToLower(key)] = key
+		paths[strings.ToLower(strings.TrimPrefix(config.Directories[key].Path, "./"))] = key
+	}
 	aliases := map[string]string{}
 	for _, key := range sortedKeys(config.Directories) {
 		d := config.Directories[key]
@@ -46,6 +52,12 @@ func checkConfig(config *Config) []string {
 			problems = append(problems, fmt.Sprintf("directories '%s' and '%s' share alias '%s'", other, key, d.Alias))
 		} else {
 			aliases[lower] = key
+		}
+		if other, clash := keys[lower]; clash && !strings.EqualFold(key, d.Alias) {
+			problems = append(problems, fmt.Sprintf("alias '%s' of directory '%s' collides with directory '%s' (names take priority)", d.Alias, key, other))
+		}
+		if other, clash := paths[lower]; clash && other != key {
+			problems = append(problems, fmt.Sprintf("alias '%s' of directory '%s' collides with the path of directory '%s' (paths take priority)", d.Alias, key, other))
 		}
 	}
 

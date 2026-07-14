@@ -26,7 +26,7 @@ func runList() {
 		keys := sortedKeys(config.Directories)
 		for _, key := range keys {
 			dir := config.Directories[key]
-			fmt.Printf("  %-12s -%s  %s\n", key, dir.Alias, dir.Path)
+			fmt.Printf("  %-12s %-4s %s\n", key, dir.Alias, dir.Path)
 		}
 	}
 

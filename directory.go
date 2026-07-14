@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -18,63 +17,35 @@ var skipDirs = map[string]bool{
 	"__pycache__":  true,
 }
 
+// scanDirectories finds subdirectories of root and returns them keyed by
+// their name. Entries from existing that already point at a found path are
+// kept as-is (key and alias included), so sync preserves customizations.
 func scanDirectories(root string, existing map[string]Directory) (map[string]Directory, error) {
-	dirs := map[string]Directory{}
-	usedAliases := map[string]bool{}
+	pathToKey := map[string]string{}
+	for key, dir := range existing {
+		pathToKey[dir.Path] = key
+	}
 
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
 
-	var newEntries []string
+	dirs := map[string]Directory{}
 	for _, entry := range entries {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || skipDirs[entry.Name()] {
 			continue
 		}
-
 		name := entry.Name()
-		key := strings.ToUpper(name)
 		path := "./" + name
-		if dir, ok := existing[key]; ok && dir.Path == path {
-			dirs[key] = dir
-			if dir.Alias != "" {
-				usedAliases[strings.ToUpper(dir.Alias)] = true
-			}
+		if key, ok := pathToKey[path]; ok {
+			dirs[key] = existing[key]
 			continue
 		}
-
-		newEntries = append(newEntries, name)
-	}
-
-	for _, name := range newEntries {
-		key := strings.ToUpper(name)
-		dirs[key] = Directory{
-			Alias: assignAlias(name, usedAliases),
-			Path:  "./" + name,
-		}
+		dirs[name] = Directory{Path: path}
 	}
 
 	return dirs, nil
-}
-
-func assignAlias(name string, usedAliases map[string]bool) string {
-	runes := []rune(strings.ToUpper(name))
-	for i := 1; i <= len(runes); i++ {
-		candidate := string(runes[:i])
-		if !usedAliases[candidate] {
-			usedAliases[candidate] = true
-			return candidate
-		}
-	}
-
-	for i := 2; ; i++ {
-		candidate := fmt.Sprintf("%s%d", string(runes[0]), i)
-		if !usedAliases[candidate] {
-			usedAliases[candidate] = true
-			return candidate
-		}
-	}
 }
 
 func diffDirectories(oldDirs, newDirs map[string]Directory) ([]string, []string, []string) {

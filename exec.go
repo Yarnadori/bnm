@@ -28,68 +28,17 @@ func runExec(taskQuery string, cmdArgs []string) {
 		found = true
 	}
 
-	isShorthand := strings.HasPrefix(taskQuery, "-")
-
-	if isShorthand {
-		searchStr := strings.TrimPrefix(taskQuery, "-")
-		for key, dir := range config.Directories {
-			if strings.EqualFold(dir.Alias, searchStr) {
-				targetDir = dir.Path
-				resolvedTaskName = key
-				found = true
-				break
-			}
-		}
-	} else if !found {
-		cleanQuery := strings.TrimPrefix(taskQuery, "./")
-
-		// Match a directory entry by key or by path
-		for key, dir := range config.Directories {
-			if strings.EqualFold(key, cleanQuery) || strings.EqualFold(strings.TrimPrefix(dir.Path, "./"), cleanQuery) {
-				targetDir = dir.Path
-				resolvedTaskName = key
-				found = true
-				break
-			}
-		}
-
-		// Fall back to directories referenced only by script tasks
-		if !found {
-		outer:
-			for _, scriptGroup := range config.Scripts {
-				for _, task := range scriptGroup.Tasks {
-					actualDir := task.Dir
-					if mappedDir, exists := config.Directories[task.Dir]; exists {
-						actualDir = mappedDir.Path
-					}
-					if strings.EqualFold(strings.TrimPrefix(actualDir, "./"), cleanQuery) {
-						targetDir = actualDir
-						resolvedTaskName = task.Dir
-						found = true
-						break outer
-					}
-				}
-			}
-		}
+	if !found {
+		resolvedTaskName, targetDir, found = resolveExecTarget(config, taskQuery)
 	}
 
 	if !found {
-		if isShorthand {
-			fmt.Printf("Error: Directory alias '%s' not found in bnm.json.\n", strings.TrimPrefix(taskQuery, "-"))
-			aliases := make([]string, 0, len(config.Directories))
-			for _, key := range sortedKeys(config.Directories) {
-				if alias := config.Directories[key].Alias; alias != "" {
-					aliases = append(aliases, "-"+alias)
-				}
-			}
-			if len(aliases) > 0 {
-				fmt.Printf("Available aliases: %s\n", strings.Join(aliases, ", "))
-			}
-		} else {
-			fmt.Printf("Error: Directory '%s' not found in bnm.json.\n", taskQuery)
-			if s := closestMatch(taskQuery, sortedKeys(config.Directories)); s != "" {
-				fmt.Printf("Did you mean '%s'?\n", s)
-			}
+		fmt.Printf("Error: Directory '%s' not found in bnm.json.\n", taskQuery)
+		if s := closestMatch(taskQuery, sortedKeys(config.Directories)); s != "" {
+			fmt.Printf("Did you mean '%s'?\n", s)
+		}
+		if len(config.Directories) > 0 {
+			fmt.Printf("Available directories: %s\n", strings.Join(sortedKeys(config.Directories), ", "))
 		}
 		os.Exit(1)
 	}
@@ -119,6 +68,42 @@ func runExec(taskQuery string, cmdArgs []string) {
 	if err := runProcess(ctx, task, taskEnv(sharedEnv, task)); err != nil {
 		os.Exit(exitCodeOf(err))
 	}
+}
+
+// resolveExecTarget finds the directory a query refers to. Matching is
+// staged — keys, then paths, then aliases, then directories referenced only
+// by script tasks — matching the priority of script filters, so a name or
+// path always wins over another directory's alias.
+func resolveExecTarget(config *Config, query string) (name, dir string, found bool) {
+	cleanQuery := strings.TrimPrefix(query, "./")
+	matchers := []func(key string, d Directory) bool{
+		func(key string, d Directory) bool { return strings.EqualFold(key, cleanQuery) },
+		func(key string, d Directory) bool {
+			return strings.EqualFold(strings.TrimPrefix(d.Path, "./"), cleanQuery)
+		},
+		func(key string, d Directory) bool { return d.Alias != "" && strings.EqualFold(d.Alias, cleanQuery) },
+	}
+	for _, match := range matchers {
+		for _, key := range sortedKeys(config.Directories) {
+			if d := config.Directories[key]; match(key, d) {
+				return key, d.Path, true
+			}
+		}
+	}
+
+	// Fall back to directories referenced only by script tasks
+	for _, scriptGroup := range config.Scripts {
+		for _, task := range scriptGroup.Tasks {
+			actualDir := task.Dir
+			if mappedDir, exists := config.Directories[task.Dir]; exists {
+				actualDir = mappedDir.Path
+			}
+			if strings.EqualFold(strings.TrimPrefix(actualDir, "./"), cleanQuery) {
+				return task.Dir, actualDir, true
+			}
+		}
+	}
+	return "", "", false
 }
 
 // runExecAll executes a command in every configured directory, sequentially

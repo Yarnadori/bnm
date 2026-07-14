@@ -18,7 +18,7 @@ func TestCompletionCandidates(t *testing.T) {
 	if got, want := completionCandidates("scripts", config, nil), []string{"build", "dev"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("scripts: got %v, want %v", got, want)
 	}
-	if got, want := completionCandidates("dirs", config, nil), []string{".", "BACKEND", "-B", "FRONTEND", "-F"}; !reflect.DeepEqual(got, want) {
+	if got, want := completionCandidates("dirs", config, nil), []string{".", "BACKEND", "B", "FRONTEND", "F"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("dirs: got %v, want %v", got, want)
 	}
 	commands := completionCandidates("commands", config, nil)

@@ -49,7 +49,7 @@ func TestFilterTasksByAlias(t *testing.T) {
 		{Dir: "BACKEND", Command: "echo b"},
 	}
 
-	got, err := filterTasks(config, tasks, []string{"-F"})
+	got, err := filterTasks(config, tasks, []string{"F"})
 	if err != nil {
 		t.Fatalf("filterTasks failed: %v", err)
 	}
@@ -83,8 +83,8 @@ func TestFilterTasksNoMatch(t *testing.T) {
 	if _, err := filterTasks(config, tasks, []string{"BACKEND"}); err == nil {
 		t.Error("expected error for filter matching no tasks")
 	}
-	if _, err := filterTasks(config, tasks, []string{"-X"}); err == nil {
-		t.Error("expected error for unknown alias filter")
+	if _, err := filterTasks(config, tasks, []string{"X"}); err == nil {
+		t.Error("expected error for unknown name filter")
 	}
 }
 
@@ -101,6 +101,37 @@ func TestFilterTasksEmptyFiltersKeepsAll(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Errorf("got %d tasks, want 2", len(got))
+	}
+}
+
+func TestFilterTasksNamePriorityOverAlias(t *testing.T) {
+	// "Z" is both a directory key and another directory's alias: the key
+	// match must win, and the alias-only task must not be pulled in
+	config := &Config{Directories: map[string]Directory{
+		"Z":     {Path: "./real-z"},
+		"OTHER": {Alias: "Z", Path: "./other"},
+	}}
+	tasks := []Task{
+		{Dir: "Z", Command: "echo z"},
+		{Dir: "OTHER", Command: "echo other"},
+	}
+
+	got, err := filterTasks(config, tasks, []string{"Z"})
+	if err != nil {
+		t.Fatalf("filterTasks failed: %v", err)
+	}
+	if len(got) != 1 || got[0].Dir != "Z" {
+		t.Errorf("got %v, want only the Z task", got)
+	}
+
+	// With no key or path named Z, the alias still matches
+	delete(config.Directories, "Z")
+	got, err = filterTasks(config, tasks[1:], []string{"Z"})
+	if err != nil {
+		t.Fatalf("filterTasks failed: %v", err)
+	}
+	if len(got) != 1 || got[0].Dir != "OTHER" {
+		t.Errorf("alias fallback: got %v", got)
 	}
 }
 
@@ -201,11 +232,11 @@ func TestTaskEnvDoesNotMutateShared(t *testing.T) {
 }
 
 func TestSplitScriptArgs(t *testing.T) {
-	filters, extra, opts, err := splitScriptArgs([]string{"-F", "--", "--port", "3000"})
+	filters, extra, opts, err := splitScriptArgs([]string{"frontend", "--", "--port", "3000"})
 	if err != nil {
 		t.Fatalf("splitScriptArgs failed: %v", err)
 	}
-	if !reflect.DeepEqual(filters, []string{"-F"}) {
+	if !reflect.DeepEqual(filters, []string{"frontend"}) {
 		t.Errorf("filters: got %v", filters)
 	}
 	if !reflect.DeepEqual(extra, []string{"--port", "3000"}) {
@@ -215,26 +246,37 @@ func TestSplitScriptArgs(t *testing.T) {
 		t.Errorf("opts: got %+v, want zero", opts)
 	}
 
-	filters, extra, opts, _ = splitScriptArgs([]string{"-F"})
-	if !reflect.DeepEqual(filters, []string{"-F"}) || extra != nil || opts != (scriptOptions{}) {
-		t.Errorf("got %v / %v / %+v", filters, extra, opts)
-	}
-
 	filters, extra, opts, _ = splitScriptArgs(nil)
 	if len(filters) != 0 || len(extra) != 0 || opts != (scriptOptions{}) {
 		t.Errorf("got %v / %v / %+v", filters, extra, opts)
 	}
 }
 
+func TestSplitScriptArgsFilterFlag(t *testing.T) {
+	// Positional names and --filter/-F values accumulate in order
+	filters, _, _, err := splitScriptArgs([]string{"--filter", "frontend", "-F", "backend", "docs"})
+	if err != nil {
+		t.Fatalf("splitScriptArgs failed: %v", err)
+	}
+	if !reflect.DeepEqual(filters, []string{"frontend", "backend", "docs"}) {
+		t.Errorf("filters: got %v", filters)
+	}
+
+	// -F now takes a value; bare -F is an error
+	if _, _, _, err := splitScriptArgs([]string{"-F"}); err == nil {
+		t.Error("expected error for -F without a value")
+	}
+}
+
 func TestSplitScriptArgsOptions(t *testing.T) {
-	filters, extra, opts, err := splitScriptArgs([]string{"--watch", "-F", "--dry-run", "--no-color", "--", "--watch"})
+	filters, extra, opts, err := splitScriptArgs([]string{"--watch", "-F", "frontend", "--dry-run", "--no-color", "--", "--watch"})
 	if err != nil {
 		t.Fatalf("splitScriptArgs failed: %v", err)
 	}
 	if !opts.Watch || !opts.DryRun || !opts.NoColor {
 		t.Errorf("opts: got %+v, want watch, dry-run, and no-color set", opts)
 	}
-	if !reflect.DeepEqual(filters, []string{"-F"}) {
+	if !reflect.DeepEqual(filters, []string{"frontend"}) {
 		t.Errorf("filters: got %v", filters)
 	}
 	// Flags after "--" are pass-through arguments, not options

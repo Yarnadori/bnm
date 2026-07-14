@@ -6,6 +6,17 @@ import (
 	"os"
 )
 
+// rawSyncConfig mirrors Config but keeps every section except directories as
+// raw JSON, so rewriting the file cannot alter scripts (OS-specific command
+// maps, key order, and any detail loadConfig normalizes away).
+type rawSyncConfig struct {
+	Schema      json.RawMessage      `json:"$schema,omitempty"`
+	Name        json.RawMessage      `json:"name,omitempty"`
+	Version     json.RawMessage      `json:"version,omitempty"`
+	Directories map[string]Directory `json:"directories,omitempty"`
+	Scripts     json.RawMessage      `json:"scripts,omitempty"`
+}
+
 func syncProject() {
 	configFile := configFileName
 	config := mustLoadConfig()
@@ -28,8 +39,19 @@ func syncProject() {
 		return
 	}
 
-	config.Directories = currentDirectories
-	data, err := json.MarshalIndent(config, "", "  ")
+	original, err := os.ReadFile(configFile)
+	if err != nil {
+		fmt.Printf("Failed to read %s: %v\n", configFile, err)
+		os.Exit(1)
+	}
+	var raw rawSyncConfig
+	if err := json.Unmarshal(original, &raw); err != nil {
+		fmt.Printf("Failed to parse %s: %v\n", configFile, err)
+		os.Exit(1)
+	}
+	raw.Directories = currentDirectories
+
+	data, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		fmt.Printf("Failed to update %s: %v\n", configFile, err)
 		os.Exit(1)

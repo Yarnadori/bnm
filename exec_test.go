@@ -7,6 +7,45 @@ import (
 	"testing"
 )
 
+func TestResolveExecTargetNamePriority(t *testing.T) {
+	// "z" is both a formal name and another directory's alias; the formal
+	// name must win regardless of sort order
+	config := &Config{Directories: map[string]Directory{
+		"other": {Alias: "z", Path: "./other"},
+		"z":     {Path: "./real-z"},
+	}}
+
+	name, dir, found := resolveExecTarget(config, "z")
+	if !found || name != "z" || dir != "./real-z" {
+		t.Errorf("got %q / %q / %v, want the formal name to win", name, dir, found)
+	}
+
+	// The alias still resolves when nothing else matches
+	delete(config.Directories, "z")
+	name, dir, found = resolveExecTarget(config, "z")
+	if !found || name != "other" || dir != "./other" {
+		t.Errorf("alias fallback: got %q / %q / %v", name, dir, found)
+	}
+
+	if _, _, found := resolveExecTarget(config, "missing"); found {
+		t.Error("expected no match for unknown name")
+	}
+}
+
+func TestResolveExecTargetPathBeatsAlias(t *testing.T) {
+	// "api" is one directory's alias and another's path; paths win, matching
+	// the priority of script filters
+	config := &Config{Directories: map[string]Directory{
+		"X": {Alias: "api", Path: "./x"},
+		"Y": {Path: "./api"},
+	}}
+
+	name, dir, found := resolveExecTarget(config, "api")
+	if !found || name != "Y" || dir != "./api" {
+		t.Errorf("got %q / %q / %v, want the path match to win", name, dir, found)
+	}
+}
+
 func TestRunExecAllProcessesContinuesAfterFailureInSortedOrder(t *testing.T) {
 	config := &Config{Directories: map[string]Directory{
 		"ZETA":  {Path: "./zeta"},

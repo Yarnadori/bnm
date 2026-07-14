@@ -205,6 +205,183 @@ func TestLoadConfigNegativeRetries(t *testing.T) {
 	}
 }
 
+func TestLoadConfigDirectoryStringForm(t *testing.T) {
+	writeConfig(t, `{
+		"directories": {"web": "./frontend", "api": {"alias": "A", "path": "./backend"}},
+		"scripts": {}
+	}`)
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	if config.Directories["web"] != (Directory{Path: "./frontend"}) {
+		t.Errorf("web: got %+v", config.Directories["web"])
+	}
+	// Legacy object form still works, alias included
+	if config.Directories["api"] != (Directory{Alias: "A", Path: "./backend"}) {
+		t.Errorf("api: got %+v", config.Directories["api"])
+	}
+}
+
+func TestLoadConfigScriptMapForm(t *testing.T) {
+	// Directory-to-command map; file order must be preserved
+	writeConfig(t, `{"scripts": {"dev": {
+		"backend": "go run .",
+		"frontend": {"linux": "npm run dev", "default": "npm run dev"},
+		"docs": {"command": "make serve", "timeout": "30s", "retries": 1, "env": {"PORT": "8080"}}
+	}}}`)
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	tasks := config.Scripts["dev"].Tasks
+	if len(tasks) != 3 {
+		t.Fatalf("tasks: got %v", tasks)
+	}
+	if tasks[0].Dir != "backend" || tasks[0].Command != "go run ." {
+		t.Errorf("task 0: got %+v", tasks[0])
+	}
+	if tasks[1].Dir != "frontend" || tasks[1].Command != "npm run dev" {
+		t.Errorf("task 1: got %+v", tasks[1])
+	}
+	docs := tasks[2]
+	if docs.Dir != "docs" || docs.Command != "make serve" || docs.Timeout != Duration(30*time.Second) || docs.Retries != 1 || docs.Env["PORT"] != "8080" {
+		t.Errorf("task 2: got %+v", docs)
+	}
+}
+
+func TestLoadConfigScriptTasksObjectForm(t *testing.T) {
+	writeConfig(t, `{"scripts": {"test": {
+		"mode": "sequential",
+		"maxParallel": 2,
+		"tasks": {
+			"frontend": "npm test",
+			"backend": {"command": "go test ./...", "retries": 1}
+		}
+	}}}`)
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	group := config.Scripts["test"]
+	if group.Mode != "sequential" || group.MaxParallel != 2 {
+		t.Errorf("group: got %+v", group)
+	}
+	if len(group.Tasks) != 2 || group.Tasks[0].Dir != "frontend" || group.Tasks[1].Retries != 1 {
+		t.Errorf("tasks: got %+v", group.Tasks)
+	}
+}
+
+func TestLoadConfigScriptRunEverywhere(t *testing.T) {
+	writeConfig(t, `{
+		"directories": {"b": "./b", "a": "./a"},
+		"scripts": {"lint": "golangci-lint run"}
+	}`)
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	tasks := config.Scripts["lint"].Tasks
+	if len(tasks) != 2 || tasks[0].Dir != "a" || tasks[1].Dir != "b" {
+		t.Errorf("tasks: got %+v", tasks)
+	}
+	for _, task := range tasks {
+		if task.Command != "golangci-lint run" {
+			t.Errorf("command: got %q", task.Command)
+		}
+	}
+}
+
+func TestLoadConfigScriptRunEverywhereNeedsDirectories(t *testing.T) {
+	writeConfig(t, `{"scripts": {"lint": "golangci-lint run"}}`)
+	if _, err := loadConfig(); err == nil {
+		t.Error("expected error for run-everywhere script without directories")
+	}
+}
+
+func TestLoadConfigScriptFormErrors(t *testing.T) {
+	cases := map[string]string{
+		"reserved field without tasks": `{"scripts": {"dev": {"mode": "parallel", "frontend": "npm run dev"}}}`,
+		"unknown script field":         `{"scripts": {"dev": {"tasks": [], "bogus": 1}}}`,
+		"conflicting dir in task":      `{"scripts": {"dev": {"frontend": {"command": "x", "dir": "backend"}}}}`,
+		"tasks as string":              `{"scripts": {"dev": {"tasks": "npm run dev"}}}`,
+		"tasks as number":              `{"scripts": {"dev": {"tasks": 123}}}`,
+		"empty command string":         `{"scripts": {"lint": ""}}`,
+		"blank command string":         `{"scripts": {"lint": "   "}}`,
+		"null script":                  `{"scripts": {"lint": null}}`,
+	}
+	for name, content := range cases {
+		writeConfig(t, content)
+		if _, err := loadConfig(); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+}
+
+func TestLoadConfigDirectoryMissingPath(t *testing.T) {
+	for _, dirJSON := range []string{`{"alias": "p"}`, `""`, `null`, `"  "`} {
+		writeConfig(t, `{"directories": {"production": `+dirJSON+`}, "scripts": {}}`)
+		if _, err := loadConfig(); err == nil {
+			t.Errorf("expected error for directory value %s", dirJSON)
+		}
+	}
+}
+
+func TestScriptGroupMarshalRoundtrip(t *testing.T) {
+	// Simple groups marshal back to the directory-to-command form
+	simple := ScriptGroup{Tasks: []Task{{Dir: "frontend", Command: "npm run dev"}}}
+	data, err := json.Marshal(simple)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `{"frontend":"npm run dev"}` {
+		t.Errorf("simple: got %s", data)
+	}
+
+	// Groups with extras keep the detailed form
+	detailed := ScriptGroup{Mode: "sequential", Tasks: []Task{{Dir: "backend", Command: "go test ./...", Retries: 1}}}
+	data, err = json.Marshal(detailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back ScriptGroup
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("roundtrip failed on %s: %v", data, err)
+	}
+	if back.Mode != "sequential" || len(back.Tasks) != 1 || back.Tasks[0].Retries != 1 || back.Tasks[0].Dir != "backend" {
+		t.Errorf("roundtrip: got %+v from %s", back, data)
+	}
+
+	// Run-everywhere shorthand marshals back to a string
+	all := ScriptGroup{AllCommand: "npm test"}
+	data, err = json.Marshal(all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `"npm test"` {
+		t.Errorf("all: got %s", data)
+	}
+}
+
+func TestScriptGroupMarshalReservedDirNames(t *testing.T) {
+	// A directory named like a script field must not be emitted in the map
+	// form, or it would be misread on reload (tasks → empty, mode → error)
+	for _, dir := range []string{"tasks", "mode", "dependsOn", "maxParallel"} {
+		group := ScriptGroup{Tasks: []Task{{Dir: dir, Command: "npm run dev"}}}
+		data, err := json.Marshal(group)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back ScriptGroup
+		if err := json.Unmarshal(data, &back); err != nil {
+			t.Fatalf("dir %q: roundtrip failed on %s: %v", dir, data, err)
+		}
+		if len(back.Tasks) != 1 || back.Tasks[0].Dir != dir || back.Tasks[0].Command != "npm run dev" {
+			t.Errorf("dir %q: roundtrip lost the task: %s → %+v", dir, data, back.Tasks)
+		}
+	}
+}
+
 func TestLoadConfigKeepsSchemaField(t *testing.T) {
 	writeConfig(t, `{"$schema": "https://example.com/schema.json", "scripts": {}}`)
 	config, err := loadConfig()

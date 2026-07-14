@@ -19,97 +19,165 @@
     },
     "directories": {
       "type": "object",
-      "description": "Named directory entries usable in scripts and with bnm exec.",
+      "description": "Named directory entries usable in scripts, filters, and bnm exec. Values are paths.",
       "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "alias": {
+        "oneOf": [
+          {
             "type": "string",
-            "description": "Short alias used with bnm exec -X and directory filters."
+            "pattern": "\\S",
+            "description": "Relative path to the directory. Must not be empty."
           },
-          "path": {
-            "type": "string",
-            "description": "Relative path to the directory."
+          {
+            "type": "object",
+            "description": "Legacy form with an alias usable as an alternative name.",
+            "properties": {
+              "alias": {
+                "type": "string",
+                "description": "Alternative short name for filters and bnm exec."
+              },
+              "path": {
+                "type": "string",
+                "pattern": "\\S",
+                "description": "Relative path to the directory. Must not be empty."
+              }
+            },
+            "required": ["path"],
+            "additionalProperties": false
           }
-        },
-        "required": ["path"],
-        "additionalProperties": false
+        ]
       }
     },
     "scripts": {
       "type": "object",
-      "description": "Named script groups runnable with bnm <script>.",
+      "description": "Named scripts runnable with bnm <script>.",
       "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "mode": {
+        "oneOf": [
+          {
             "type": "string",
-            "enum": ["parallel", "sequential"],
-            "description": "How tasks are run. Defaults to parallel."
+            "pattern": "\\S",
+            "description": "Run this command in every configured directory (parallel). Must not be empty."
           },
-          "dependsOn": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Scripts to run to completion before this one. Cycles are rejected."
-          },
-          "maxParallel": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Maximum number of tasks running at once in parallel mode. 0 or omitted means unlimited."
-          },
-          "tasks": {
-            "type": "array",
-            "description": "Tasks to run.",
-            "items": {
-              "type": "object",
-              "properties": {
-                "dir": {
-                  "type": "string",
-                  "description": "Directory key from directories, or a path. Omit or use '.' for the project root."
-                },
-                "command": {
-                  "description": "Command to run: a string, or an object keyed by OS (windows, mac, linux, default).",
-                  "oneOf": [
-                    { "type": "string" },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "windows": { "type": "string" },
-                        "mac": { "type": "string" },
-                        "darwin": { "type": "string" },
-                        "linux": { "type": "string" },
-                        "default": { "type": "string" }
-                      },
-                      "additionalProperties": { "type": "string" }
-                    }
-                  ]
-                },
-                "env": {
-                  "type": "object",
-                  "additionalProperties": { "type": "string" },
-                  "description": "Extra environment variables for this task. Override the shared environment."
-                },
-                "timeout": {
-                  "type": "string",
-                  "description": "Per-attempt time limit as a Go duration string (e.g. \"30s\", \"2m\"). The task is killed when it elapses.",
-                  "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
-                },
-                "retries": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "description": "How many times to rerun the task after a failure. 0 or omitted means no retries."
-                }
+          {
+            "type": "object",
+            "description": "Detailed form: mode, dependencies, concurrency, and tasks.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["parallel", "sequential"],
+                "description": "How tasks are run. Defaults to parallel."
               },
-              "required": ["command"],
-              "additionalProperties": false
-            }
+              "dependsOn": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Scripts to run to completion before this one. Cycles are rejected."
+              },
+              "maxParallel": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Maximum number of tasks running at once in parallel mode. 0 or omitted means unlimited."
+              },
+              "tasks": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "description": "Tasks keyed by directory (name from directories, or a path).",
+                    "additionalProperties": { "$ref": "#/definitions/taskValue" }
+                  },
+                  {
+                    "type": "array",
+                    "description": "Legacy array form with an explicit dir per task.",
+                    "items": { "$ref": "#/definitions/taskObject" }
+                  }
+                ]
+              }
+            },
+            "required": ["tasks"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Directory-to-command map. Keys are directory names from directories, or paths ('.' for the project root).",
+            "not": { "required": ["tasks"] },
+            "properties": {
+              "mode": false,
+              "dependsOn": false,
+              "maxParallel": false
+            },
+            "additionalProperties": { "$ref": "#/definitions/taskValue" }
           }
-        },
-        "required": ["tasks"],
-        "additionalProperties": false
+        ]
       }
     }
   },
   "required": ["scripts"],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "definitions": {
+    "command": {
+      "description": "Command to run: a string, or an object keyed by OS (windows, mac, linux, default).",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "properties": {
+            "windows": { "type": "string" },
+            "mac": { "type": "string" },
+            "darwin": { "type": "string" },
+            "linux": { "type": "string" },
+            "default": { "type": "string" }
+          },
+          "not": { "required": ["command"] },
+          "additionalProperties": { "type": "string" }
+        }
+      ]
+    },
+    "taskSettings": {
+      "env": {
+        "type": "object",
+        "additionalProperties": { "type": "string" },
+        "description": "Extra environment variables for this task. Override the shared environment."
+      },
+      "timeout": {
+        "type": "string",
+        "description": "Per-attempt time limit as a Go duration string (e.g. \"30s\", \"2m\"). The task is killed when it elapses.",
+        "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+      },
+      "retries": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "How many times to rerun the task after a failure. 0 or omitted means no retries."
+      }
+    },
+    "taskValue": {
+      "description": "A command, or a task object with env/timeout/retries.",
+      "oneOf": [
+        { "$ref": "#/definitions/command" },
+        {
+          "type": "object",
+          "properties": {
+            "command": { "$ref": "#/definitions/command" },
+            "env": { "$ref": "#/definitions/taskSettings/env" },
+            "timeout": { "$ref": "#/definitions/taskSettings/timeout" },
+            "retries": { "$ref": "#/definitions/taskSettings/retries" }
+          },
+          "required": ["command"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "taskObject": {
+      "type": "object",
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Directory key from directories, or a path. Omit or use '.' for the project root."
+        },
+        "command": { "$ref": "#/definitions/command" },
+        "env": { "$ref": "#/definitions/taskSettings/env" },
+        "timeout": { "$ref": "#/definitions/taskSettings/timeout" },
+        "retries": { "$ref": "#/definitions/taskSettings/retries" }
+      },
+      "required": ["command"],
+      "additionalProperties": false
+    }
+  }
 }

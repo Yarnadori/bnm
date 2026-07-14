@@ -64,6 +64,43 @@ func TestCheckConfigDuplicateAlias(t *testing.T) {
 	}
 }
 
+func TestCheckConfigAliasKeyCollision(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	for _, d := range []string{"a", "b"} {
+		if err := os.Mkdir(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	config := &Config{
+		Directories: map[string]Directory{
+			"z":     {Path: "./a"},
+			"OTHER": {Alias: "Z", Path: "./b"},
+		},
+		Scripts: map[string]ScriptGroup{},
+	}
+	problems := checkConfig(config)
+	if len(problems) != 1 || !strings.Contains(problems[0], "collides") {
+		t.Errorf("got %v, want alias-name collision problem", problems)
+	}
+
+	// An alias equal to its own key is harmless
+	config.Directories = map[string]Directory{"web": {Alias: "WEB", Path: "./a"}}
+	if problems := checkConfig(config); len(problems) != 0 {
+		t.Errorf("self alias: got %v, want none", problems)
+	}
+
+	// An alias colliding with another directory's path is reported
+	config.Directories = map[string]Directory{
+		"X": {Alias: "b", Path: "./a"},
+		"Y": {Path: "./b"},
+	}
+	problems = checkConfig(config)
+	if len(problems) != 1 || !strings.Contains(problems[0], "path") {
+		t.Errorf("got %v, want alias-path collision problem", problems)
+	}
+}
+
 func TestCheckConfigTaskProblems(t *testing.T) {
 	t.Chdir(t.TempDir())
 	config := &Config{

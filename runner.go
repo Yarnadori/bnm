@@ -335,47 +335,63 @@ func resolveTask(t *Task, config *Config) {
 }
 
 // filterTasks returns the tasks matching any of the given directory filters.
-// A filter is an alias prefixed with '-', a directory key, or a path.
-// Every filter must match at least one task.
+// A filter is a directory key, a path, or an alias; key and path matches
+// take priority, so an alias colliding with another directory's name never
+// pulls in extra tasks. Every filter must match at least one task.
 func filterTasks(config *Config, tasks []Task, filters []string) ([]Task, error) {
 	if len(filters) == 0 {
 		return tasks, nil
 	}
-	used := make([]bool, len(filters))
-	var matched []Task
-	for _, task := range tasks {
-		for i, f := range filters {
-			if taskMatchesFilter(config, task, f) {
-				used[i] = true
-				matched = append(matched, task)
-				break
+	include := make([]bool, len(tasks))
+	for _, f := range filters {
+		matchedAny := false
+		for i, task := range tasks {
+			if taskMatchesName(config, task, f) {
+				include[i] = true
+				matchedAny = true
 			}
 		}
-	}
-	for i, f := range filters {
-		if !used[i] {
+		if !matchedAny {
+			for i, task := range tasks {
+				if taskMatchesAlias(config, task, f) {
+					include[i] = true
+					matchedAny = true
+				}
+			}
+		}
+		if !matchedAny {
 			return nil, fmt.Errorf("no tasks in this script match directory filter '%s'", f)
+		}
+	}
+	var matched []Task
+	for i, task := range tasks {
+		if include[i] {
+			matched = append(matched, task)
 		}
 	}
 	return matched, nil
 }
 
-func taskMatchesFilter(config *Config, task Task, filter string) bool {
+// taskMatchesName reports whether the filter equals the task's directory
+// key or path.
+func taskMatchesName(config *Config, task Task, filter string) bool {
 	dirKey := task.Dir
 	dirPath := task.Dir
-	alias := ""
 	if d, exists := config.Directories[task.Dir]; exists {
 		dirPath = d.Path
-		alias = d.Alias
-	}
-	if aliasFilter, ok := strings.CutPrefix(filter, "-"); ok {
-		return alias != "" && strings.EqualFold(alias, aliasFilter)
 	}
 	if dirKey == "" {
 		dirKey, dirPath = ".", "."
 	}
 	clean := func(s string) string { return strings.TrimPrefix(s, "./") }
 	return strings.EqualFold(dirKey, filter) || strings.EqualFold(clean(dirPath), clean(filter))
+}
+
+// taskMatchesAlias reports whether the filter equals the task directory's
+// configured alias.
+func taskMatchesAlias(config *Config, task Task, filter string) bool {
+	d, exists := config.Directories[task.Dir]
+	return exists && d.Alias != "" && strings.EqualFold(d.Alias, filter)
 }
 
 // runGroup runs one script group and reports per-task results plus overall

@@ -80,7 +80,7 @@ func completionCandidates(what string, config *Config, configErr error) []string
 			for _, key := range sortedKeys(config.Directories) {
 				candidates = append(candidates, key)
 				if alias := config.Directories[key].Alias; alias != "" {
-					candidates = append(candidates, "-"+alias)
+					candidates = append(candidates, alias)
 				}
 			}
 			return candidates

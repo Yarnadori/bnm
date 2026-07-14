@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -22,16 +24,230 @@ type Config struct {
 	Scripts     map[string]ScriptGroup `json:"scripts"`
 }
 
-type ScriptGroup struct {
-	Mode        string   `json:"mode,omitempty"`
-	DependsOn   []string `json:"dependsOn,omitempty"`
-	MaxParallel int      `json:"maxParallel,omitempty"`
-	Tasks       []Task   `json:"tasks"`
+// Directory is a named directory entry. In JSON it is written as a plain
+// path string; the legacy {"alias": ..., "path": ...} object form is still
+// accepted, and its alias works as an alternative name.
+type Directory struct {
+	Alias string
+	Path  string
 }
 
-type Directory struct {
-	Alias string `json:"alias"`
-	Path  string `json:"path"`
+func (d *Directory) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		d.Path = s
+		return nil
+	}
+	var obj struct {
+		Alias string `json:"alias"`
+		Path  string `json:"path"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return fmt.Errorf("directory must be a path string or an object with \"path\"")
+	}
+	d.Alias, d.Path = obj.Alias, obj.Path
+	return nil
+}
+
+func (d Directory) MarshalJSON() ([]byte, error) {
+	if d.Alias == "" {
+		return json.Marshal(d.Path)
+	}
+	return json.Marshal(struct {
+		Alias string `json:"alias"`
+		Path  string `json:"path"`
+	}{d.Alias, d.Path})
+}
+
+// ScriptGroup is one runnable script. In JSON it takes three forms:
+//
+//	"test": "npm test"                            — run in every directory
+//	"dev": {"frontend": "npm run dev", ...}       — directory-to-command map
+//	"dev": {"mode": ..., "tasks": ...}            — detailed form; tasks is
+//	                                                a directory-keyed object
+//	                                                or the legacy array
+type ScriptGroup struct {
+	Mode        string
+	DependsOn   []string
+	MaxParallel int
+	Tasks       []Task
+	AllCommand  Command // run-everywhere shorthand, expanded by loadConfig
+}
+
+// scriptGroupFields are the keys of the detailed form. An object containing
+// "tasks" is detailed; anything else is a directory-to-command map.
+var scriptGroupFields = map[string]bool{"mode": true, "dependsOn": true, "maxParallel": true, "tasks": true}
+
+func (g *ScriptGroup) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		// An empty command would silently expand to zero tasks
+		if strings.TrimSpace(s) == "" {
+			return fmt.Errorf("script command must not be empty")
+		}
+		g.AllCommand = Command(s)
+		return nil
+	}
+	if string(trimmed) == "null" {
+		return fmt.Errorf("script must not be null")
+	}
+
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return fmt.Errorf("script must be a command string, a directory-to-command object, or an object with \"tasks\"")
+	}
+
+	if rawTasks, ok := probe["tasks"]; ok {
+		for key := range probe {
+			if !scriptGroupFields[key] {
+				return fmt.Errorf("unknown script field %q", key)
+			}
+		}
+		var d struct {
+			Mode        string   `json:"mode"`
+			DependsOn   []string `json:"dependsOn"`
+			MaxParallel int      `json:"maxParallel"`
+		}
+		if err := json.Unmarshal(data, &d); err != nil {
+			return err
+		}
+		g.Mode, g.DependsOn, g.MaxParallel = d.Mode, d.DependsOn, d.MaxParallel
+		tasks, err := unmarshalTasks(rawTasks)
+		if err != nil {
+			return err
+		}
+		g.Tasks = tasks
+		return nil
+	}
+
+	for _, key := range []string{"mode", "dependsOn", "maxParallel"} {
+		if _, ok := probe[key]; ok {
+			return fmt.Errorf("script field %q requires a \"tasks\" entry", key)
+		}
+	}
+	tasks, err := decodeTaskMap(data)
+	if err != nil {
+		return err
+	}
+	g.Tasks = tasks
+	return nil
+}
+
+func (g ScriptGroup) MarshalJSON() ([]byte, error) {
+	if g.AllCommand != "" {
+		return json.Marshal(g.AllCommand.String())
+	}
+	if g.Mode == "" && len(g.DependsOn) == 0 && g.MaxParallel == 0 {
+		if m, ok := taskMap(g.Tasks); ok {
+			return json.Marshal(m)
+		}
+	}
+	return json.Marshal(struct {
+		Mode        string   `json:"mode,omitempty"`
+		DependsOn   []string `json:"dependsOn,omitempty"`
+		MaxParallel int      `json:"maxParallel,omitempty"`
+		Tasks       []Task   `json:"tasks"`
+	}{g.Mode, g.DependsOn, g.MaxParallel, g.Tasks})
+}
+
+// taskMap converts tasks to the directory-to-command form when nothing
+// would be lost: every task is a plain command in a distinct directory whose
+// name would not be misread as a script field on reload.
+func taskMap(tasks []Task) (map[string]string, bool) {
+	m := make(map[string]string, len(tasks))
+	for _, t := range tasks {
+		dir := t.Dir
+		if dir == "" {
+			dir = "."
+		}
+		if scriptGroupFields[dir] {
+			return nil, false
+		}
+		if _, dup := m[dir]; dup || len(t.Env) > 0 || t.Timeout != 0 || t.Retries != 0 || t.Command == "" {
+			return nil, false
+		}
+		m[dir] = t.Command.String()
+	}
+	return m, len(m) > 0
+}
+
+// unmarshalTasks parses the "tasks" field: a directory-keyed object, or the
+// legacy array of task objects with a "dir" field.
+func unmarshalTasks(data []byte) ([]Task, error) {
+	trimmed := bytes.TrimSpace(data)
+	switch {
+	case len(trimmed) > 0 && trimmed[0] == '[':
+		var tasks []Task
+		if err := json.Unmarshal(data, &tasks); err != nil {
+			return nil, err
+		}
+		return tasks, nil
+	case len(trimmed) > 0 && trimmed[0] == '{':
+		return decodeTaskMap(data)
+	default:
+		return nil, fmt.Errorf("\"tasks\" must be a directory-keyed object or an array of tasks")
+	}
+}
+
+// decodeTaskMap parses a directory-keyed object into tasks, preserving the
+// order keys appear in the file (encoding/json maps would lose it, and the
+// order is meaningful in sequential mode).
+func decodeTaskMap(data []byte) ([]Task, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if _, err := dec.Token(); err != nil {
+		return nil, err
+	}
+	var tasks []Task
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		dir, _ := keyTok.(string)
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return nil, err
+		}
+		task, err := taskFromValue(dir, raw)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, nil
+}
+
+// taskFromValue builds a task from a directory-keyed entry. The value is a
+// command (string or OS object), or a task object — recognized by its
+// "command" field — carrying env/timeout/retries.
+func taskFromValue(dir string, raw []byte) (Task, error) {
+	task := Task{Dir: dir}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) > 0 && trimmed[0] == '{' {
+		var probe map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			return task, err
+		}
+		if _, ok := probe["command"]; ok {
+			var t Task
+			if err := json.Unmarshal(raw, &t); err != nil {
+				return task, err
+			}
+			if t.Dir != "" && t.Dir != dir {
+				return task, fmt.Errorf("task %q must not set a different \"dir\" (%q)", dir, t.Dir)
+			}
+			t.Dir = dir
+			return t, nil
+		}
+	}
+	if err := json.Unmarshal(raw, &task.Command); err != nil {
+		return task, err
+	}
+	return task, nil
 }
 
 type Task struct {
@@ -58,6 +274,10 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 	}
 	*d = Duration(v)
 	return nil
+}
+
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.String())
 }
 
 func (d Duration) String() string {
@@ -107,7 +327,24 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("failed to parse %s: %w", configFileName, err)
 	}
 
+	for key, dir := range config.Directories {
+		if strings.TrimSpace(dir.Path) == "" {
+			return nil, fmt.Errorf("directory '%s' has no path", key)
+		}
+	}
+
 	for name, group := range config.Scripts {
+		// Expand the run-everywhere shorthand into one task per directory
+		if group.AllCommand != "" {
+			if len(config.Directories) == 0 {
+				return nil, fmt.Errorf("script '%s' runs in every directory, but no directories are configured", name)
+			}
+			for _, key := range sortedKeys(config.Directories) {
+				group.Tasks = append(group.Tasks, Task{Dir: key, Command: group.AllCommand})
+			}
+			config.Scripts[name] = group
+		}
+
 		if group.Mode != "" && group.Mode != "parallel" && group.Mode != "sequential" {
 			return nil, fmt.Errorf("script '%s' has unknown mode '%s' (expected \"parallel\" or \"sequential\")", name, group.Mode)
 		}
