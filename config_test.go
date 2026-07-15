@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -272,6 +274,193 @@ func TestLoadConfigScriptTasksObjectForm(t *testing.T) {
 	}
 }
 
+func TestLoadConfigTaskNameAndDirSeparated(t *testing.T) {
+	// Keys are task names; "dir" picks the directory, several tasks may
+	// share one, and the file order is preserved
+	writeConfig(t, `{"scripts": {"check": {
+		"mode": "parallel",
+		"tasks": {
+			"frontend-lint": {"dir": "frontend", "command": "npm run lint"},
+			"frontend-typecheck": {"dir": "frontend", "command": "npm run typecheck"},
+			"backend-test": {"dir": "backend", "command": "go test ./..."}
+		}
+	}}}`)
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	tasks := config.Scripts["check"].Tasks
+	want := []Task{
+		{Name: "frontend-lint", Dir: "frontend", Command: "npm run lint"},
+		{Name: "frontend-typecheck", Dir: "frontend", Command: "npm run typecheck"},
+		{Name: "backend-test", Dir: "backend", Command: "go test ./..."},
+	}
+	if !reflect.DeepEqual(tasks, want) {
+		t.Errorf("tasks: got %+v, want %+v", tasks, want)
+	}
+}
+
+func TestLoadConfigTaskDirDefaultsToName(t *testing.T) {
+	// Without "dir" the key is both the name and the directory, in the
+	// string form, the object form, and the shorthand map form
+	writeConfig(t, `{"scripts": {
+		"dev": {"frontend": "npm run dev"},
+		"test": {"tasks": {
+			"frontend": {"command": "npm test", "timeout": "2m"},
+			"backend": "go test ./..."
+		}}
+	}}`)
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	dev := config.Scripts["dev"].Tasks
+	if len(dev) != 1 || dev[0].Name != "frontend" || dev[0].Dir != "frontend" {
+		t.Errorf("dev tasks: got %+v", dev)
+	}
+	test := config.Scripts["test"].Tasks
+	if len(test) != 2 || test[0].Name != "frontend" || test[0].Dir != "frontend" || test[0].Timeout != Duration(2*time.Minute) {
+		t.Errorf("test tasks: got %+v", test)
+	}
+	if test[1].Name != "backend" || test[1].Dir != "backend" {
+		t.Errorf("test task 1: got %+v", test[1])
+	}
+}
+
+func TestLoadConfigShorthandTaskWithDir(t *testing.T) {
+	// The shorthand map form also accepts a task whose dir differs from
+	// its key, and a "dir" equal to the key stays valid
+	writeConfig(t, `{"scripts": {"check": {
+		"lint": {"dir": "frontend", "command": "npm run lint"},
+		"frontend": {"dir": "frontend", "command": "npm test"}
+	}}}`)
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	tasks := config.Scripts["check"].Tasks
+	if len(tasks) != 2 || tasks[0].Name != "lint" || tasks[0].Dir != "frontend" {
+		t.Errorf("task 0: got %+v", tasks)
+	}
+	if tasks[1].Name != "frontend" || tasks[1].Dir != "frontend" {
+		t.Errorf("task 1: got %+v", tasks[1])
+	}
+}
+
+func TestLoadConfigWatchField(t *testing.T) {
+	writeConfig(t, `{"scripts": {
+		"dev": {"watch": true, "tasks": {"frontend": "echo dev"}},
+		"build": {"tasks": {"frontend": "echo build"}}
+	}}`)
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	if !config.Scripts["dev"].Watch {
+		t.Error("dev: Watch not set")
+	}
+	if config.Scripts["build"].Watch {
+		t.Error("build: Watch unexpectedly set")
+	}
+
+	// watch without tasks is a pointed error, not a broken task
+	writeConfig(t, `{"scripts": {"dev": {"watch": true}}}`)
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), `"watch" requires a "tasks" entry`) {
+		t.Errorf("watch without tasks: got %v", err)
+	}
+
+	// A task named "watch" in the map form keeps working
+	writeConfig(t, `{"scripts": {"dev": {"watch": "npm run watch"}}}`)
+	config, err = loadConfig()
+	if err != nil {
+		t.Fatalf("task named watch: loadConfig failed: %v", err)
+	}
+	tasks := config.Scripts["dev"].Tasks
+	if len(tasks) != 1 || tasks[0].Name != "watch" || tasks[0].Command != "npm run watch" {
+		t.Errorf("task named watch: got %+v", tasks)
+	}
+}
+
+func TestLoadConfigTaskWatch(t *testing.T) {
+	writeConfig(t, `{"scripts": {"dev": {"tasks": {
+		"frontend": {"command": "npm run dev", "watch": true},
+		"backend": "go run ."
+	}}}}`)
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	tasks := config.Scripts["dev"].Tasks
+	if !tasks[0].Watch || tasks[1].Watch {
+		t.Errorf("watch flags: got %v / %v, want true / false", tasks[0].Watch, tasks[1].Watch)
+	}
+
+	// Restarting individual tasks contradicts sequential order
+	writeConfig(t, `{"scripts": {"dev": {"mode": "sequential", "tasks": {
+		"frontend": {"command": "npm run dev", "watch": true}
+	}}}}`)
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "parallel mode") {
+		t.Errorf("sequential + task watch: got %v", err)
+	}
+}
+
+func TestScriptGroupMarshalTaskWatch(t *testing.T) {
+	group := ScriptGroup{Tasks: []Task{{Name: "frontend", Dir: "frontend", Command: "npm run dev", Watch: true}}}
+	data, err := json.Marshal(group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"frontend":{"dir":"frontend","command":"npm run dev","watch":true}}`; string(data) != want {
+		t.Errorf("got %s, want %s", data, want)
+	}
+	var back ScriptGroup
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("roundtrip failed on %s: %v", data, err)
+	}
+	if len(back.Tasks) != 1 || !back.Tasks[0].Watch {
+		t.Errorf("roundtrip: got %+v", back.Tasks)
+	}
+}
+
+func TestScriptGroupMarshalWatch(t *testing.T) {
+	group := ScriptGroup{Watch: true, Tasks: []Task{{Name: "frontend", Dir: "frontend", Command: "echo dev"}}}
+	data, err := json.Marshal(group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"watch":true,"tasks":{"frontend":"echo dev"}}`; string(data) != want {
+		t.Errorf("got %s, want %s", data, want)
+	}
+	var back ScriptGroup
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("roundtrip failed on %s: %v", data, err)
+	}
+	if !back.Watch || len(back.Tasks) != 1 || back.Tasks[0].Name != "frontend" {
+		t.Errorf("roundtrip: got %+v", back)
+	}
+}
+
+func TestScriptGroupMarshalNamedTasks(t *testing.T) {
+	group := ScriptGroup{Tasks: []Task{
+		{Name: "lint", Dir: "frontend", Command: "npm run lint"},
+		{Name: "frontend", Dir: "frontend", Command: "npm run dev"},
+	}}
+	data, err := json.Marshal(group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"lint":{"dir":"frontend","command":"npm run lint"},"frontend":"npm run dev"}`; string(data) != want {
+		t.Errorf("got %s\nwant %s", data, want)
+	}
+	var back ScriptGroup
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("roundtrip failed on %s: %v", data, err)
+	}
+	if !reflect.DeepEqual(back.Tasks, group.Tasks) {
+		t.Errorf("roundtrip: got %+v, want %+v", back.Tasks, group.Tasks)
+	}
+}
+
 func TestLoadConfigScriptRunEverywhere(t *testing.T) {
 	writeConfig(t, `{
 		"directories": {"b": "./b", "a": "./a"},
@@ -303,12 +492,14 @@ func TestLoadConfigScriptFormErrors(t *testing.T) {
 	cases := map[string]string{
 		"reserved field without tasks": `{"scripts": {"dev": {"mode": "parallel", "frontend": "npm run dev"}}}`,
 		"unknown script field":         `{"scripts": {"dev": {"tasks": [], "bogus": 1}}}`,
-		"conflicting dir in task":      `{"scripts": {"dev": {"frontend": {"command": "x", "dir": "backend"}}}}`,
 		"tasks as string":              `{"scripts": {"dev": {"tasks": "npm run dev"}}}`,
 		"tasks as number":              `{"scripts": {"dev": {"tasks": 123}}}`,
 		"empty command string":         `{"scripts": {"lint": ""}}`,
 		"blank command string":         `{"scripts": {"lint": "   "}}`,
 		"null script":                  `{"scripts": {"lint": null}}`,
+		"empty task name":              `{"scripts": {"dev": {"tasks": {"": "echo hi"}}}}`,
+		"blank task name":              `{"scripts": {"dev": {"  ": "echo hi"}}}`,
+		"duplicate task name":          `{"scripts": {"dev": {"tasks": {"a": "echo 1", "a": "echo 2"}}}}`,
 	}
 	for name, content := range cases {
 		writeConfig(t, content)
@@ -366,7 +557,7 @@ func TestScriptGroupMarshalRoundtrip(t *testing.T) {
 func TestScriptGroupMarshalReservedDirNames(t *testing.T) {
 	// A directory named like a script field must not be emitted in the map
 	// form, or it would be misread on reload (tasks → empty, mode → error)
-	for _, dir := range []string{"tasks", "mode", "dependsOn", "maxParallel"} {
+	for _, dir := range []string{"tasks", "mode", "dependsOn", "maxParallel", "watch"} {
 		group := ScriptGroup{Tasks: []Task{{Dir: dir, Command: "npm run dev"}}}
 		data, err := json.Marshal(group)
 		if err != nil {

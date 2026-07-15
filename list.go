@@ -50,12 +50,13 @@ func runList() {
 				attrs += ", depends on: " + strings.Join(group.DependsOn, ", ")
 			}
 			fmt.Printf("  %s (%s)\n", name, attrs)
+			nameWidth, dirWidth := 12, 4
 			for _, task := range group.Tasks {
-				dir := task.Dir
-				if dir == "" {
-					dir = "."
-				}
-				fmt.Printf("    %-12s %s\n", dir, task.Command)
+				nameWidth = max(nameWidth, len(taskName(task, config)))
+				dirWidth = max(dirWidth, len(taskDirLabel(task)))
+			}
+			for _, task := range group.Tasks {
+				fmt.Printf("    %-*s %-*s %s\n", nameWidth, taskName(task, config), dirWidth, taskDirLabel(task), task.Command)
 			}
 		}
 	}

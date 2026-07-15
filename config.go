@@ -62,21 +62,27 @@ func (d Directory) MarshalJSON() ([]byte, error) {
 // ScriptGroup is one runnable script. In JSON it takes three forms:
 //
 //	"test": "npm test"                            — run in every directory
-//	"dev": {"frontend": "npm run dev", ...}       — directory-to-command map
+//	"dev": {"frontend": "npm run dev", ...}       — name-to-command map; the
+//	                                                key doubles as the
+//	                                                directory unless the value
+//	                                                sets "dir"
 //	"dev": {"mode": ..., "tasks": ...}            — detailed form; tasks is
-//	                                                a directory-keyed object
-//	                                                or the legacy array
+//	                                                a name-keyed object or
+//	                                                the legacy array
 type ScriptGroup struct {
 	Mode        string
 	DependsOn   []string
 	MaxParallel int
+	Watch       bool // watch by default; only honored for the target script
 	Tasks       []Task
 	AllCommand  Command // run-everywhere shorthand, expanded by loadConfig
 }
 
 // scriptGroupFields are the keys of the detailed form. An object containing
-// "tasks" is detailed; anything else is a directory-to-command map.
-var scriptGroupFields = map[string]bool{"mode": true, "dependsOn": true, "maxParallel": true, "tasks": true}
+// "tasks" is detailed; anything else is a task map. A task in the map form
+// cannot use one of these names; the detailed "tasks" object has no such
+// restriction.
+var scriptGroupFields = map[string]bool{"mode": true, "dependsOn": true, "maxParallel": true, "watch": true, "tasks": true}
 
 func (g *ScriptGroup) UnmarshalJSON(data []byte) error {
 	trimmed := bytes.TrimSpace(data)
@@ -111,11 +117,12 @@ func (g *ScriptGroup) UnmarshalJSON(data []byte) error {
 			Mode        string   `json:"mode"`
 			DependsOn   []string `json:"dependsOn"`
 			MaxParallel int      `json:"maxParallel"`
+			Watch       bool     `json:"watch"`
 		}
 		if err := json.Unmarshal(data, &d); err != nil {
 			return err
 		}
-		g.Mode, g.DependsOn, g.MaxParallel = d.Mode, d.DependsOn, d.MaxParallel
+		g.Mode, g.DependsOn, g.MaxParallel, g.Watch = d.Mode, d.DependsOn, d.MaxParallel, d.Watch
 		tasks, err := unmarshalTasks(rawTasks)
 		if err != nil {
 			return err
@@ -127,6 +134,14 @@ func (g *ScriptGroup) UnmarshalJSON(data []byte) error {
 	for _, key := range []string{"mode", "dependsOn", "maxParallel"} {
 		if _, ok := probe[key]; ok {
 			return fmt.Errorf("script field %q requires a \"tasks\" entry", key)
+		}
+	}
+	// A task named "watch" stays valid in the map form, but a boolean can
+	// only be the script field, so catch it with a pointed error instead of
+	// a command-type complaint.
+	if raw, ok := probe["watch"]; ok {
+		if v := string(bytes.TrimSpace(raw)); v == "true" || v == "false" {
+			return fmt.Errorf("script field \"watch\" requires a \"tasks\" entry")
 		}
 	}
 	tasks, err := decodeTaskMap(data)
@@ -141,41 +156,82 @@ func (g ScriptGroup) MarshalJSON() ([]byte, error) {
 	if g.AllCommand != "" {
 		return json.Marshal(g.AllCommand.String())
 	}
-	if g.Mode == "" && len(g.DependsOn) == 0 && g.MaxParallel == 0 {
-		if m, ok := taskMap(g.Tasks); ok {
-			return json.Marshal(m)
+	rawTasks, keys, ok := taskMapJSON(g.Tasks)
+	if ok && g.Mode == "" && len(g.DependsOn) == 0 && g.MaxParallel == 0 && !g.Watch && len(g.Tasks) > 0 {
+		reserved := false
+		for _, key := range keys {
+			if scriptGroupFields[key] {
+				reserved = true
+				break
+			}
+		}
+		if !reserved {
+			return rawTasks, nil
+		}
+	}
+	if !ok {
+		// Legacy array fallback; explicit task names (if any) are lost here,
+		// which only happens for task lists the map form cannot represent.
+		var err error
+		if rawTasks, err = json.Marshal(g.Tasks); err != nil {
+			return nil, err
 		}
 	}
 	return json.Marshal(struct {
-		Mode        string   `json:"mode,omitempty"`
-		DependsOn   []string `json:"dependsOn,omitempty"`
-		MaxParallel int      `json:"maxParallel,omitempty"`
-		Tasks       []Task   `json:"tasks"`
-	}{g.Mode, g.DependsOn, g.MaxParallel, g.Tasks})
+		Mode        string          `json:"mode,omitempty"`
+		DependsOn   []string        `json:"dependsOn,omitempty"`
+		MaxParallel int             `json:"maxParallel,omitempty"`
+		Watch       bool            `json:"watch,omitempty"`
+		Tasks       json.RawMessage `json:"tasks"`
+	}{g.Mode, g.DependsOn, g.MaxParallel, g.Watch, rawTasks})
 }
 
-// taskMap converts tasks to the directory-to-command form when nothing
-// would be lost: every task is a plain command in a distinct directory whose
-// name would not be misread as a script field on reload.
-func taskMap(tasks []Task) (map[string]string, bool) {
-	m := make(map[string]string, len(tasks))
-	for _, t := range tasks {
-		dir := t.Dir
-		if dir == "" {
-			dir = "."
+// taskMapJSON renders tasks as a name-keyed object, preserving order, and
+// returns the keys used. It reports ok=false when that form would lose or
+// change information on reload: an empty command or a duplicate key.
+func taskMapJSON(tasks []Task) (json.RawMessage, []string, bool) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	keys := make([]string, 0, len(tasks))
+	seen := map[string]bool{}
+	for i, t := range tasks {
+		if t.Dir == "" {
+			t.Dir = "."
 		}
-		if scriptGroupFields[dir] {
-			return nil, false
+		key := t.Name
+		if key == "" {
+			key = t.Dir
 		}
-		if _, dup := m[dir]; dup || len(t.Env) > 0 || t.Timeout != 0 || t.Retries != 0 || t.Command == "" {
-			return nil, false
+		if t.Command == "" || seen[key] {
+			return nil, nil, false
 		}
-		m[dir] = t.Command.String()
+		seen[key] = true
+		keys = append(keys, key)
+
+		var value any = t.Command.String()
+		if len(t.Env) > 0 || t.Timeout != 0 || t.Retries != 0 || t.Watch || t.Dir != key {
+			value = t // Dir is normalized above, so a named task keeps its directory
+		}
+		keyJSON, err := json.Marshal(key)
+		if err != nil {
+			return nil, nil, false
+		}
+		valueJSON, err := json.Marshal(value)
+		if err != nil {
+			return nil, nil, false
+		}
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		buf.Write(keyJSON)
+		buf.WriteByte(':')
+		buf.Write(valueJSON)
 	}
-	return m, len(m) > 0
+	buf.WriteByte('}')
+	return buf.Bytes(), keys, true
 }
 
-// unmarshalTasks parses the "tasks" field: a directory-keyed object, or the
+// unmarshalTasks parses the "tasks" field: a name-keyed object, or the
 // legacy array of task objects with a "dir" field.
 func unmarshalTasks(data []byte) ([]Task, error) {
 	trimmed := bytes.TrimSpace(data)
@@ -189,11 +245,11 @@ func unmarshalTasks(data []byte) ([]Task, error) {
 	case len(trimmed) > 0 && trimmed[0] == '{':
 		return decodeTaskMap(data)
 	default:
-		return nil, fmt.Errorf("\"tasks\" must be a directory-keyed object or an array of tasks")
+		return nil, fmt.Errorf("\"tasks\" must be a name-keyed object or an array of tasks")
 	}
 }
 
-// decodeTaskMap parses a directory-keyed object into tasks, preserving the
+// decodeTaskMap parses a name-keyed object into tasks, preserving the
 // order keys appear in the file (encoding/json maps would lose it, and the
 // order is meaningful in sequential mode).
 func decodeTaskMap(data []byte) ([]Task, error) {
@@ -202,17 +258,25 @@ func decodeTaskMap(data []byte) ([]Task, error) {
 		return nil, err
 	}
 	var tasks []Task
+	seen := map[string]bool{}
 	for dec.More() {
 		keyTok, err := dec.Token()
 		if err != nil {
 			return nil, err
 		}
-		dir, _ := keyTok.(string)
+		name, _ := keyTok.(string)
+		if strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("task name must not be empty")
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("duplicate task name %q", name)
+		}
+		seen[name] = true
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
 			return nil, err
 		}
-		task, err := taskFromValue(dir, raw)
+		task, err := taskFromValue(name, raw)
 		if err != nil {
 			return nil, err
 		}
@@ -221,11 +285,12 @@ func decodeTaskMap(data []byte) ([]Task, error) {
 	return tasks, nil
 }
 
-// taskFromValue builds a task from a directory-keyed entry. The value is a
+// taskFromValue builds a task from a name-keyed entry. The value is a
 // command (string or OS object), or a task object — recognized by its
-// "command" field — carrying env/timeout/retries.
-func taskFromValue(dir string, raw []byte) (Task, error) {
-	task := Task{Dir: dir}
+// "command" field — carrying dir/env/timeout/retries. The key names the
+// task; unless the object sets "dir", it doubles as the directory.
+func taskFromValue(name string, raw []byte) (Task, error) {
+	task := Task{Name: name, Dir: name}
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) > 0 && trimmed[0] == '{' {
 		var probe map[string]json.RawMessage
@@ -237,10 +302,10 @@ func taskFromValue(dir string, raw []byte) (Task, error) {
 			if err := json.Unmarshal(raw, &t); err != nil {
 				return task, err
 			}
-			if t.Dir != "" && t.Dir != dir {
-				return task, fmt.Errorf("task %q must not set a different \"dir\" (%q)", dir, t.Dir)
+			t.Name = name
+			if t.Dir == "" {
+				t.Dir = name
 			}
-			t.Dir = dir
 			return t, nil
 		}
 	}
@@ -251,13 +316,15 @@ func taskFromValue(dir string, raw []byte) (Task, error) {
 }
 
 type Task struct {
-	Name    string            `json:"-"`
-	LogPath string            `json:"-"`
-	Dir     string            `json:"dir,omitempty"`
-	Command Command           `json:"command"`
-	Env     map[string]string `json:"env,omitempty"`
-	Timeout Duration          `json:"timeout,omitempty"`
-	Retries int               `json:"retries,omitempty"`
+	Name     string            `json:"-"`
+	LogPath  string            `json:"-"`
+	DirLabel string            `json:"-"` // the dir as written in the config; set by resolveTask
+	Dir      string            `json:"dir,omitempty"`
+	Command  Command           `json:"command"`
+	Env      map[string]string `json:"env,omitempty"`
+	Timeout  Duration          `json:"timeout,omitempty"`
+	Retries  int               `json:"retries,omitempty"`
+	Watch    bool              `json:"watch,omitempty"` // restart just this task when its directory changes
 }
 
 // Duration is a time.Duration that unmarshals from a JSON string like "30s".
@@ -340,7 +407,7 @@ func loadConfig() (*Config, error) {
 				return nil, fmt.Errorf("script '%s' runs in every directory, but no directories are configured", name)
 			}
 			for _, key := range sortedKeys(config.Directories) {
-				group.Tasks = append(group.Tasks, Task{Dir: key, Command: group.AllCommand})
+				group.Tasks = append(group.Tasks, Task{Name: key, Dir: key, Command: group.AllCommand})
 			}
 			config.Scripts[name] = group
 		}
@@ -357,6 +424,10 @@ func loadConfig() (*Config, error) {
 			}
 			if task.Retries < 0 {
 				return nil, fmt.Errorf("script '%s' task %d has negative retries %d", name, i+1, task.Retries)
+			}
+			// Restarting individual tasks contradicts a fixed execution order
+			if task.Watch && group.Mode == "sequential" {
+				return nil, fmt.Errorf("script '%s' task %d has \"watch\": true, which requires parallel mode", name, i+1)
 			}
 		}
 	}

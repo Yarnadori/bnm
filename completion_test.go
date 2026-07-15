@@ -25,6 +25,13 @@ func TestCompletionCandidates(t *testing.T) {
 	if len(commands) != len(builtinCommands)+2 || commands[len(commands)-2] != "build" || commands[len(commands)-1] != "dev" {
 		t.Errorf("commands: got %v", commands)
 	}
+
+	// A script shadowing a builtin ("check") must not be listed twice
+	config.Scripts["check"] = ScriptGroup{}
+	commands = completionCandidates("commands", config, nil)
+	if len(commands) != len(builtinCommands)+2 {
+		t.Errorf("commands with check script: got %v", commands)
+	}
 }
 
 func TestCompletionCandidatesIgnoresBrokenConfig(t *testing.T) {

@@ -76,11 +76,15 @@
                 "minimum": 0,
                 "description": "Maximum number of tasks running at once in parallel mode. 0 or omitted means unlimited."
               },
+              "watch": {
+                "type": "boolean",
+                "description": "Run in watch mode by default: rerun when files in task directories change. Only honored when this script is the one invoked; --no-watch overrides it."
+              },
               "tasks": {
                 "oneOf": [
                   {
                     "type": "object",
-                    "description": "Tasks keyed by directory (name from directories, or a path).",
+                    "description": "Tasks keyed by task name. The key doubles as the directory unless the task sets \"dir\".",
                     "additionalProperties": { "$ref": "#/definitions/taskValue" }
                   },
                   {
@@ -96,7 +100,7 @@
           },
           {
             "type": "object",
-            "description": "Directory-to-command map. Keys are directory names from directories, or paths ('.' for the project root).",
+            "description": "Task map. Keys are task names and double as the directory (a directories name, alias, or path; '.' for the project root) unless the task sets \"dir\".",
             "not": { "required": ["tasks"] },
             "properties": {
               "mode": false,
@@ -145,19 +149,29 @@
         "type": "integer",
         "minimum": 0,
         "description": "How many times to rerun the task after a failure. 0 or omitted means no retries."
+      },
+      "watch": {
+        "type": "boolean",
+        "description": "Restart just this task when files in its directory change; other tasks keep running. Requires parallel mode. Ignored when the whole script runs in watch mode."
       }
     },
     "taskValue": {
-      "description": "A command, or a task object with env/timeout/retries.",
+      "description": "A command, or a task object with dir/env/timeout/retries.",
       "oneOf": [
         { "$ref": "#/definitions/command" },
         {
           "type": "object",
           "properties": {
+            "dir": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Directory the command runs in: a directories name, alias, or path ('.' for the project root). Defaults to the task's key."
+            },
             "command": { "$ref": "#/definitions/command" },
             "env": { "$ref": "#/definitions/taskSettings/env" },
             "timeout": { "$ref": "#/definitions/taskSettings/timeout" },
-            "retries": { "$ref": "#/definitions/taskSettings/retries" }
+            "retries": { "$ref": "#/definitions/taskSettings/retries" },
+            "watch": { "$ref": "#/definitions/taskSettings/watch" }
           },
           "required": ["command"],
           "additionalProperties": false
@@ -174,7 +188,8 @@
         "command": { "$ref": "#/definitions/command" },
         "env": { "$ref": "#/definitions/taskSettings/env" },
         "timeout": { "$ref": "#/definitions/taskSettings/timeout" },
-        "retries": { "$ref": "#/definitions/taskSettings/retries" }
+        "retries": { "$ref": "#/definitions/taskSettings/retries" },
+        "watch": { "$ref": "#/definitions/taskSettings/watch" }
       },
       "required": ["command"],
       "additionalProperties": false

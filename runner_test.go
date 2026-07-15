@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -135,6 +137,162 @@ func TestFilterTasksNamePriorityOverAlias(t *testing.T) {
 	}
 }
 
+func TestResolveTask(t *testing.T) {
+	config := testConfig()
+	cases := []struct {
+		in       Task
+		name     string
+		dir      string
+		dirLabel string
+	}{
+		// Explicit names survive resolution; dir resolves by key, alias, or path
+		{Task{Name: "lint", Dir: "FRONTEND"}, "lint", "./frontend", "FRONTEND"},
+		{Task{Name: "lint", Dir: "F"}, "lint", "./frontend", "F"},
+		{Task{Name: "lint", Dir: "./elsewhere"}, "lint", "./elsewhere", "./elsewhere"},
+		{Task{Name: "lint", Dir: "."}, "lint", ".", "."},
+		{Task{Name: "lint"}, "lint", ".", "."},
+		// Legacy tasks without a name fall back to the directory
+		{Task{Dir: "FRONTEND"}, "FRONTEND", "./frontend", "FRONTEND"},
+		{Task{Dir: "./elsewhere"}, "./elsewhere", "./elsewhere", "./elsewhere"},
+		{Task{}, "my-app", ".", "."},
+	}
+	for _, c := range cases {
+		got := c.in
+		resolveTask(&got, config)
+		if got.Name != c.name || got.Dir != c.dir || got.DirLabel != c.dirLabel {
+			t.Errorf("resolveTask(%+v): got name %q dir %q label %q, want %q %q %q",
+				c.in, got.Name, got.Dir, got.DirLabel, c.name, c.dir, c.dirLabel)
+		}
+	}
+}
+
+func TestFilterTasksByTaskName(t *testing.T) {
+	config := testConfig()
+	tasks := []Task{
+		{Name: "frontend-lint", Dir: "FRONTEND", Command: "echo lint"},
+		{Name: "frontend-test", Dir: "FRONTEND", Command: "echo test"},
+		{Name: "backend-test", Dir: "BACKEND", Command: "echo b"},
+	}
+
+	got, err := filterTasksByTaskName(config, tasks, tasks, []string{"frontend-lint"}, "check")
+	if err != nil {
+		t.Fatalf("filterTasksByTaskName failed: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "frontend-lint" {
+		t.Errorf("got %v, want only frontend-lint", got)
+	}
+
+	// Multiple names accumulate, keeping task order
+	got, err = filterTasksByTaskName(config, tasks, tasks, []string{"backend-test", "frontend-lint"}, "check")
+	if err != nil {
+		t.Fatalf("filterTasksByTaskName failed: %v", err)
+	}
+	if len(got) != 2 || got[0].Name != "frontend-lint" || got[1].Name != "backend-test" {
+		t.Errorf("got %v, want frontend-lint and backend-test", got)
+	}
+
+	// Empty filter list keeps everything
+	got, err = filterTasksByTaskName(config, tasks, tasks, nil, "check")
+	if err != nil || len(got) != 3 {
+		t.Errorf("got %v / %v, want all tasks", got, err)
+	}
+
+	// Legacy tasks without explicit names match by their derived name
+	legacy := []Task{{Dir: "FRONTEND", Command: "echo f"}}
+	got, err = filterTasksByTaskName(config, legacy, legacy, []string{"FRONTEND"}, "check")
+	if err != nil || len(got) != 1 {
+		t.Errorf("legacy: got %v / %v", got, err)
+	}
+}
+
+func TestFilterTasksByTaskNameUnknown(t *testing.T) {
+	config := testConfig()
+	tasks := []Task{{Name: "frontend-lint", Dir: "FRONTEND", Command: "echo lint"}}
+
+	_, err := filterTasksByTaskName(config, tasks, tasks, []string{"frontend-lnit"}, "check")
+	if err == nil {
+		t.Fatal("expected error for unknown task name")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "no task named 'frontend-lnit' exists in script 'check'") {
+		t.Errorf("error: got %q", msg)
+	}
+	if !strings.Contains(msg, "Did you mean 'frontend-lint'?") {
+		t.Errorf("error is missing the suggestion: %q", msg)
+	}
+}
+
+func TestFilterTasksByTaskNameAndDirectoryFilterAreAnded(t *testing.T) {
+	config := testConfig()
+	all := []Task{
+		{Name: "frontend-lint", Dir: "FRONTEND", Command: "echo lint"},
+		{Name: "frontend-test", Dir: "FRONTEND", Command: "echo test"},
+		{Name: "backend-test", Dir: "BACKEND", Command: "echo b"},
+	}
+
+	// Directory filter first, task filter on the result
+	byDir, err := filterTasks(config, all, []string{"FRONTEND"})
+	if err != nil {
+		t.Fatalf("filterTasks failed: %v", err)
+	}
+	if len(byDir) != 2 {
+		t.Fatalf("dir filter: got %v, want both FRONTEND tasks", byDir)
+	}
+	got, err := filterTasksByTaskName(config, byDir, all, []string{"frontend-lint"}, "check")
+	if err != nil {
+		t.Fatalf("filterTasksByTaskName failed: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "frontend-lint" {
+		t.Errorf("got %v, want only frontend-lint", got)
+	}
+
+	// A task that exists but is excluded by the directory filter is an error,
+	// not a typo suggestion
+	_, err = filterTasksByTaskName(config, byDir, all, []string{"backend-test"}, "check")
+	if err == nil || !strings.Contains(err.Error(), "does not match the directory filter") {
+		t.Errorf("got %v, want directory-filter mismatch error", err)
+	}
+}
+
+func TestFilterTasksDirectorySelectsAllTasksInDir(t *testing.T) {
+	config := testConfig()
+	tasks := []Task{
+		{Name: "frontend-lint", Dir: "FRONTEND", Command: "echo lint"},
+		{Name: "frontend-test", Dir: "FRONTEND", Command: "echo test"},
+		{Name: "backend-test", Dir: "BACKEND", Command: "echo b"},
+	}
+
+	for _, filter := range []string{"FRONTEND", "F", "./frontend"} {
+		got, err := filterTasks(config, tasks, []string{filter})
+		if err != nil {
+			t.Fatalf("filterTasks(%q) failed: %v", filter, err)
+		}
+		if len(got) != 2 || got[0].Name != "frontend-lint" || got[1].Name != "frontend-test" {
+			t.Errorf("filter %q: got %v, want both FRONTEND tasks", filter, got)
+		}
+	}
+}
+
+func TestFilterTasksDirWrittenAsAlias(t *testing.T) {
+	// A task whose dir is an alias must be reachable by the directory's
+	// formal name, the alias itself, and the path
+	config := &Config{Directories: map[string]Directory{
+		"WEB": {Alias: "F", Path: "./apps/frontend"},
+	}}
+	tasks := []Task{{Name: "lint", Dir: "F", Command: "echo lint"}}
+
+	for _, filter := range []string{"WEB", "F", "./apps/frontend", "apps/frontend"} {
+		got, err := filterTasks(config, tasks, []string{filter})
+		if err != nil {
+			t.Errorf("filter %q: %v", filter, err)
+			continue
+		}
+		if len(got) != 1 || got[0].Name != "lint" {
+			t.Errorf("filter %q: got %v, want the lint task", filter, got)
+		}
+	}
+}
+
 func TestFilterTasksRootDir(t *testing.T) {
 	config := testConfig()
 	tasks := []Task{
@@ -242,12 +400,12 @@ func TestSplitScriptArgs(t *testing.T) {
 	if !reflect.DeepEqual(extra, []string{"--port", "3000"}) {
 		t.Errorf("extra: got %v", extra)
 	}
-	if opts != (scriptOptions{}) {
+	if !reflect.DeepEqual(opts, scriptOptions{}) {
 		t.Errorf("opts: got %+v, want zero", opts)
 	}
 
 	filters, extra, opts, _ = splitScriptArgs(nil)
-	if len(filters) != 0 || len(extra) != 0 || opts != (scriptOptions{}) {
+	if len(filters) != 0 || len(extra) != 0 || !reflect.DeepEqual(opts, scriptOptions{}) {
 		t.Errorf("got %v / %v / %+v", filters, extra, opts)
 	}
 }
@@ -287,6 +445,182 @@ func TestSplitScriptArgsOptions(t *testing.T) {
 	_, _, opts, _ = splitScriptArgs([]string{"-w", "-n"})
 	if !opts.Watch || !opts.DryRun {
 		t.Errorf("short flags: got %+v", opts)
+	}
+}
+
+func TestAnyTaskWatch(t *testing.T) {
+	if anyTaskWatch([]Task{{Command: "a"}, {Command: "b"}}) {
+		t.Error("got true for tasks without watch")
+	}
+	if !anyTaskWatch([]Task{{Command: "a"}, {Command: "b", Watch: true}}) {
+		t.Error("got false for a watch task")
+	}
+}
+
+// waitForLines polls file until it holds want non-empty lines or the
+// deadline passes, and returns the count seen last.
+func waitForLines(t *testing.T, file string, want int) int {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	got := 0
+	for time.Now().Before(deadline) {
+		data, _ := os.ReadFile(file)
+		got = len(strings.Fields(string(data)))
+		if got >= want {
+			return got
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return got
+}
+
+func TestSuperviseTaskRestarts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	dir := t.TempDir()
+	runs := filepath.Join(dir, "runs")
+	// Records each start, then stays alive like a dev server
+	task := Task{Name: "srv", Watch: true, Command: Command("echo x >> " + runs + " && sleep 30")}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	restart := make(chan struct{}, 1)
+	stopped := make(chan struct{})
+	go func() {
+		superviseTask(ctx, task, os.Environ(), nil, restart)
+		close(stopped)
+	}()
+
+	if got := waitForLines(t, runs, 1); got != 1 {
+		t.Fatalf("initial run: got %d starts", got)
+	}
+	restart <- struct{}{}
+	if got := waitForLines(t, runs, 2); got != 2 {
+		t.Fatalf("after restart: got %d starts", got)
+	}
+
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("supervisor did not stop on cancel")
+	}
+}
+
+func TestSuperviseTaskRestartAfterExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	dir := t.TempDir()
+	runs := filepath.Join(dir, "runs")
+	// A short-lived task: the supervisor must wait for the next change
+	// instead of looping
+	task := Task{Name: "build", Watch: true, Command: Command("echo x >> " + runs)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	restart := make(chan struct{}, 1)
+	stopped := make(chan struct{})
+	go func() {
+		superviseTask(ctx, task, os.Environ(), nil, restart)
+		close(stopped)
+	}()
+
+	if got := waitForLines(t, runs, 1); got != 1 {
+		t.Fatalf("initial run: got %d starts", got)
+	}
+	// No signal: it must stay at one run
+	time.Sleep(200 * time.Millisecond)
+	if got := waitForLines(t, runs, 1); got != 1 {
+		t.Fatalf("idle: got %d starts, want still 1", got)
+	}
+	restart <- struct{}{}
+	if got := waitForLines(t, runs, 2); got != 2 {
+		t.Fatalf("after restart: got %d starts", got)
+	}
+	cancel()
+	<-stopped
+}
+
+func TestSuperviseTaskWithoutWatchRunsOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	dir := t.TempDir()
+	runs := filepath.Join(dir, "runs")
+	task := Task{Name: "once", Command: Command("echo x >> " + runs)}
+
+	done := make(chan struct{})
+	go func() {
+		superviseTask(context.Background(), task, os.Environ(), nil, nil)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("unwatched task did not return after exiting")
+	}
+	if got := waitForLines(t, runs, 1); got != 1 {
+		t.Fatalf("got %d starts, want 1", got)
+	}
+}
+
+func TestWatchEnabled(t *testing.T) {
+	cases := []struct {
+		group ScriptGroup
+		opts  scriptOptions
+		want  bool
+	}{
+		{ScriptGroup{}, scriptOptions{}, false},
+		{ScriptGroup{}, scriptOptions{Watch: true}, true},
+		{ScriptGroup{Watch: true}, scriptOptions{}, true},
+		{ScriptGroup{Watch: true}, scriptOptions{NoWatch: true}, false},
+		{ScriptGroup{Watch: true}, scriptOptions{Watch: true}, true},
+	}
+	for _, c := range cases {
+		if got := watchEnabled(c.group, c.opts); got != c.want {
+			t.Errorf("watchEnabled(watch=%v, %+v) = %v, want %v", c.group.Watch, c.opts, got, c.want)
+		}
+	}
+}
+
+func TestSplitScriptArgsNoWatch(t *testing.T) {
+	_, _, opts, err := splitScriptArgs([]string{"--no-watch"})
+	if err != nil || !opts.NoWatch {
+		t.Errorf("got %+v / %v, want NoWatch set", opts, err)
+	}
+
+	// The two flags contradict each other
+	if _, _, _, err := splitScriptArgs([]string{"--watch", "--no-watch"}); err == nil {
+		t.Error("expected error for --watch with --no-watch")
+	}
+	// Also when everything after -- is pass-through
+	if _, _, _, err := splitScriptArgs([]string{"-w", "--no-watch", "--", "x"}); err == nil {
+		t.Error("expected error for -w with --no-watch before --")
+	}
+}
+
+func TestSplitScriptArgsTaskFlag(t *testing.T) {
+	// --task/-T values accumulate separately from directory filters
+	filters, _, opts, err := splitScriptArgs([]string{"--task", "frontend-lint", "-T", "backend-test", "-F", "frontend"})
+	if err != nil {
+		t.Fatalf("splitScriptArgs failed: %v", err)
+	}
+	if !reflect.DeepEqual(opts.TaskFilters, []string{"frontend-lint", "backend-test"}) {
+		t.Errorf("task filters: got %v", opts.TaskFilters)
+	}
+	if !reflect.DeepEqual(filters, []string{"frontend"}) {
+		t.Errorf("filters: got %v", filters)
+	}
+
+	_, _, opts, err = splitScriptArgs([]string{"--task=lint"})
+	if err != nil || !reflect.DeepEqual(opts.TaskFilters, []string{"lint"}) {
+		t.Errorf("--task=lint: got %v / %v", opts.TaskFilters, err)
+	}
+
+	if _, _, _, err := splitScriptArgs([]string{"-T"}); err == nil {
+		t.Error("expected error for -T without a value")
 	}
 }
 
@@ -352,6 +686,53 @@ func TestUniquePathCaseFold(t *testing.T) {
 	}
 	if got := uniquePath(used, "a", ".log"); got != "a.log" {
 		t.Errorf("got %q, want a.log", got)
+	}
+}
+
+func TestSummaryJSONWithDir(t *testing.T) {
+	results := []taskResult{
+		{Name: "frontend-lint", Dir: "frontend", Status: statusOK, Duration: 1200 * time.Millisecond},
+		{Name: "frontend-typecheck", Dir: "frontend", Status: statusFailed, Duration: 3800 * time.Millisecond},
+	}
+	got := string(summaryJSON("check", results, true))
+	want := `{"script":"check","ok":false,"tasks":[` +
+		`{"name":"frontend-lint","dir":"frontend","status":"ok","durationMs":1200},` +
+		`{"name":"frontend-typecheck","dir":"frontend","status":"failed","durationMs":3800}]}`
+	if got != want {
+		t.Errorf("got %s\nwant %s", got, want)
+	}
+}
+
+func TestRunGroupMultipleTasksSameDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	dir := t.TempDir()
+	newTasks := func() []Task {
+		return []Task{
+			{Name: "one", Dir: dir, DirLabel: "app", Command: Command("touch one.marker")},
+			{Name: "two", Dir: dir, DirLabel: "app", Command: Command("touch two.marker")},
+		}
+	}
+
+	for _, mode := range []string{"parallel", "sequential"} {
+		os.Remove(filepath.Join(dir, "one.marker"))
+		os.Remove(filepath.Join(dir, "two.marker"))
+		results, ok := runGroup(context.Background(), mode, 0, newTasks(), os.Environ())
+		if !ok {
+			t.Fatalf("%s: runGroup reported failure: %v", mode, results)
+		}
+		for _, marker := range []string{"one.marker", "two.marker"} {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err != nil {
+				t.Errorf("%s: %s was not created: %v", mode, marker, err)
+			}
+		}
+		if results[0].Name != "one" || results[1].Name != "two" {
+			t.Errorf("%s: result names: got %v", mode, results)
+		}
+		if results[0].Dir != "app" || results[1].Dir != "app" {
+			t.Errorf("%s: result dirs: got %v", mode, results)
+		}
 	}
 }
 

@@ -132,6 +132,14 @@ bnm dev --filter frontend -F backend
 bnm dev ./frontend        # パス指定。'.' はルートのタスクにマッチ
 ```
 
+**タスク名絞り込み** — `--task` / `-T` は、指定した名前のタスクだけを実行します(完全一致・大文字小文字は区別しない、複数回指定可)。ディレクトリ絞り込みと併用した場合は両方の条件を満たすタスクだけが実行されます:
+
+```bash
+bnm check --task lint
+bnm check -T lint -T typecheck
+bnm check --filter frontend --task lint   # AND 条件: frontend の lint タスク
+```
+
 **引数パススルー** — `--` 以降はスクリプトの各タスクコマンドの末尾に追加されます(依存スクリプトには影響しません):
 
 ```bash
@@ -140,6 +148,51 @@ bnm dev -F frontend -- --port 3000
 
 **ウォッチモード** — `--watch`(または `-w`)を付けると、タスクディレクトリ配下のファイルが変更されるたびにスクリプトを再実行します。実行中のタスクは終了させてから再起動するので、dev サーバーにも使えます。隠しディレクトリや依存・ビルドディレクトリ(`node_modules`、`dist`、`target` など)は監視対象外です。Ctrl+C で終了します。
 
+常にウォッチしたいスクリプトは、詳細形式で `"watch": true` を設定できます。`bnm dev` だけでウォッチモードになり、`--no-watch` を付けると 1 回だけ実行します。この設定は起動したスクリプト自身にのみ適用され、依存スクリプトの `watch` は無視されます:
+
+```json
+{
+  "scripts": {
+    "dev": {
+      "watch": true,
+      "tasks": {
+        "frontend": "npm run dev",
+        "backend": "go run ."
+      }
+    }
+  }
+}
+```
+
+**タスク単位のウォッチ** — *タスク*に `"watch": true` を付けると、そのタスクのディレクトリの変更時に**そのタスクだけ**を再起動します。他のタスクは動き続けます。依存スクリプトは最初に 1 回だけ実行され、同じディレクトリを共有するウォッチ対象タスクはまとめて再起動されます:
+
+```json
+{
+  "scripts": {
+    "dev": {
+      "tasks": {
+        "frontend": {
+          "command": "npm run dev",
+          "watch": true
+        },
+        "backend": "go run ."
+      }
+    }
+  }
+}
+```
+
+```text
+$ bnm dev
+[frontend] $ npm run dev
+[backend] $ go run .
+... frontend/src/app.js を編集 ...
+[bnm] Task 'frontend' changed. Restarting...
+[frontend] $ npm run dev
+```
+
+タスク単位のウォッチは並列モード専用です(1 タスクだけの再起動は実行順の保証と矛盾するため、`sequential` との併用は設定エラーになります)。`--no-watch` で無効化できます。スクリプト全体のウォッチ(`--watch` またはスクリプトの `"watch": true`)が有効な場合はそちらが優先され、全体を再実行します。
+
 **ドライラン** — `--dry-run`(または `-n`)は、何も実行せずに実行計画(順序・モード・解決後のディレクトリとコマンド。依存スクリプトや絞り込みも反映)を表示します。
 
 **ログファイル出力** — `--log-dir <ディレクトリ>` を付けると、各タスクの出力(プレフィックス・色なし)を `<ディレクトリ>/<スクリプト>/<タスク>.log` にも書き出します。ファイルは実行開始時に空にされ、リトライやウォッチモードの再実行では追記されます。
@@ -147,7 +200,7 @@ bnm dev -F frontend -- --port 3000
 **JSON サマリー** — `--summary json` を付けると、サマリーの表の代わりに 1 行の JSON を出力します。CI からタスクごとの結果をパースできます:
 
 ```json
-{"script":"dev","ok":true,"tasks":[{"name":"frontend","status":"ok","durationMs":812}]}
+{"script":"dev","ok":true,"tasks":[{"name":"frontend","dir":"frontend","status":"ok","durationMs":812}]}
 ```
 
 **色付き出力** — stdout が TTY でない場合や [`NO_COLOR`](https://no-color.org/) 環境変数が設定されている場合は自動的に無効になります。`--no-color` で強制的に無効化できます。
@@ -157,7 +210,7 @@ bnm dev -F frontend -- --port 3000
 - `sequential` モードでは、最初に失敗したタスクで実行を停止します。
 - 依存スクリプトが失敗した場合、残りのスクリプトはスキップされます。
 - いずれかのタスクが失敗した場合、bnm は非ゼロの終了コードで終了します(CI で安全に使えます)。
-- 注意: 組み込みコマンド(`init` / `sync` / `list` / `ls` / `check` / `exec` / `completion` / `help` / `version`)と同名のスクリプトはこの形式では実行できません。
+- 注意: 組み込みコマンド(`init` / `sync` / `list` / `ls` / `doctor` / `exec` / `completion` / `help` / `version`)と同名のスクリプトはこの形式では実行できません。`check` だけは例外で、`check` スクリプトが定義されていればそちらが優先されます(検証は `bnm doctor` でいつでも実行できます)。
 
 ### `bnm init`
 
@@ -167,16 +220,18 @@ bnm dev -F frontend -- --port 3000
 
 `bnm.json` の `directories` セクションを現在のサブディレクトリに合わせて更新します。パスが変わっていない既存エントリは維持され、新しいディレクトリは追加、削除されたディレクトリはエントリごと削除されます。
 
-### `bnm check`
+### `bnm doctor`
 
-`bnm.json` を検証し、問題があれば非ゼロ終了コードで終了します。チェック内容: JSON 構文、`mode` / `maxParallel` / `timeout` / `retries` の値、`dependsOn` の参照と循環、実在しないディレクトリパス、エイリアスの重複、解決できないタスクのディレクトリ、現在の OS 向けコマンドがないタスク。CI の最初のステップとしても便利です。
+`bnm.json` を検証し、問題があれば非ゼロ終了コードで終了します。チェック内容: JSON 構文、`mode` / `maxParallel` / `timeout` / `retries` の値、`dependsOn` の参照と循環、実在しないディレクトリパス、エイリアスの重複、解決できないタスクのディレクトリ、スクリプト内のタスク名の重複、現在の OS 向けコマンドがないタスク。CI の最初のステップとしても便利です。
 
 ```bash
-$ bnm check
+$ bnm doctor
 [bnm] Found 2 problem(s) in bnm.json:
   - directory 'frontend': path './frontend' does not exist
   - script 'dev' task 2: no command for this OS (linux)
 ```
+
+`bnm check` も同じ動作をします。ただし設定に `check` という名前のスクリプトが定義されている場合は、他のスクリプトと同様にそのスクリプトを実行します。既存の CI 設定はそのまま動きます。確実に検証を実行したい場合は `bnm doctor` を使ってください。
 
 ### `bnm list`
 
@@ -223,7 +278,7 @@ JSON Schema を [`schema/bnm.schema.json`](schema/bnm.schema.json) で公開し�
 
 ### スクリプト
 
-ほとんどのスクリプトは「ディレクトリ → コマンド」のマップだけで書けます。キーは `directories` の名前か、そのままのパス(`./` は省略可能、`.` はプロジェクトルート)で、デフォルトは並列実行です:
+ほとんどのスクリプトは「タスク名 → コマンド」のマップだけで書けます。キーはタスク名であると同時に実行ディレクトリ — `directories` の名前、そのエイリアス、またはパス(`./` は省略可能、`.` はプロジェクトルート)— を兼ね、デフォルトは並列実行です:
 
 ```json
 {
@@ -246,7 +301,7 @@ JSON Schema を [`schema/bnm.schema.json`](schema/bnm.schema.json) で公開し�
 }
 ```
 
-直列実行・依存関係・並列度制限・タスク単位の設定が必要なときだけ、詳細形式を使います。タスクはディレクトリをキーにしたまま、`env` / `timeout` / `retries` を指定できます:
+直列実行・依存関係・並列度制限・タスク単位の設定が必要なときだけ、詳細形式を使います。タスクのキーの扱いは同じで、さらに `dir` / `env` / `timeout` / `retries` を指定できます:
 
 ```json
 {
@@ -276,14 +331,54 @@ JSON Schema を [`schema/bnm.schema.json`](schema/bnm.schema.json) で公開し�
 | `mode`                 | string  | `"parallel"`(デフォルト)または `"sequential"`                           |
 | `dependsOn`            | array   | このスクリプトの前に最後まで実行されるスクリプト。循環は検出してエラー    |
 | `maxParallel`          | integer | 並列モードでの同時実行タスク数の上限。`0` または省略で無制限              |
-| `tasks`                | object  | ディレクトリをキーにしたタスク定義(`{dir, command, ...}` の配列も可)    |
+| `watch`                | boolean | このスクリプトを起動したときにウォッチモードにする。`--no-watch` で上書き |
+| `tasks`                | object  | タスク名をキーにしたタスク定義(`{dir, command, ...}` の配列も可)        |
 
 | タスクのフィールド | 型                   | 説明                                                                      |
 | ------------------ | -------------------- | -------------------------------------------------------------------------- |
+| `dir`              | string               | コマンドの実行ディレクトリ。`directories` の名前、エイリアス、またはパス。省略時はタスクのキーを使用 |
 | `command`          | string または object | 実行するコマンド。OS 別指定も可能(下記参照)                              |
 | `env`              | object               | このタスクだけに追加で渡す環境変数                                        |
 | `timeout`          | string               | 1 回の実行あたりの制限時間(例: `"30s"`、`"2m"`)。超過するとタスクを終了 |
 | `retries`          | integer              | 失敗時に再実行する回数。省略時は `0`(再試行なし)                        |
+| `watch`            | boolean              | このタスクのディレクトリの変更時に、このタスクだけを再起動(並列モード専用) |
+
+### 同じディレクトリで複数のタスクを実行する
+
+タスク名はディレクトリから独立しているので、`dir` を使えば複数のタスクが 1 つのディレクトリを共有できます。タスク名はスクリプト内で一意である必要があります:
+
+```json
+{
+  "scripts": {
+    "check": {
+      "tasks": {
+        "lint": {
+          "dir": "frontend",
+          "command": "npm run lint"
+        },
+        "typecheck": {
+          "dir": "frontend",
+          "command": "npm run typecheck"
+        }
+      }
+    }
+  }
+}
+```
+
+タスク名で 1 つだけ実行することも、ディレクトリ単位でまとめて実行することもできます:
+
+```bash
+bnm check --task lint     # lint タスクだけ(-T typecheck の形式も可)
+bnm check frontend        # dir が frontend の全タスク(lint と typecheck)を実行
+```
+
+ログ・サマリー・`--log-dir` のファイル名にはタスク名が使われるので、同じディレクトリのタスクも区別できます:
+
+```text
+[lint] $ npm run lint
+[typecheck] $ npm run typecheck
+```
 
 ### directories
 
@@ -344,11 +439,12 @@ bnm はプロジェクトルートの `.env` を自動で読み込み、以下�
 
 - **並列・直列**実行、`dependsOn` によるスクリプト依存、`maxParallel` による並列度制限
 - **ディレクトリ絞り込み** — `bnm dev frontend` または `--filter` / `-F`
+- **タスク名絞り込み** — `--task` / `-T` で単一タスクを実行。`dir` で複数の名前付きタスクが 1 つのディレクトリを共有可能
 - **引数パススルー** — `bnm dev -- --port 3000`
-- **ウォッチモード** — `--watch` でファイル変更時に再実行
+- **ウォッチモード** — `--watch` または設定の `"watch": true` でファイル変更時に再実行(`--no-watch` で上書き)。タスクの `"watch": true` はそのタスクだけを再起動
 - **ドライラン** — `--dry-run` で実行計画を表示
 - **タイムアウト・リトライ** — タスク単位の `timeout` と `retries`
-- **設定の検証** — `bnm check` で実行前に問題を検出
+- **設定の検証** — `bnm doctor` で実行前に問題を検出
 - **対話式の初期化** — `bnm init` がディレクトリとコマンドを自動検出
 - 出力の**色分けプレフィックス表示**(`--no-color` / `NO_COLOR` で無効化)と、タスク別**ログファイル**(`--log-dir`)
 - **実行サマリー** — タスクごとの成否と所要時間。JSON 出力(`--summary json`)にも対応

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -77,6 +78,116 @@ func runScriptWatch(ctx context.Context, config *Config, order []string, tasksBy
 			return
 		}
 	}
+}
+
+// watchTaskDirs watches the directories of the tasks marked "watch": true
+// and delivers, per debounced burst of file events, the indexes of the tasks
+// whose directory contains a change. Tasks sharing a directory are all
+// signaled. It also reports how many directories are being watched. ignore
+// is an absolute path (or "") whose subtree is excluded.
+func watchTaskDirs(ctx context.Context, tasks []Task, ignore string) (<-chan []int, int, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	type root struct {
+		abs   string
+		tasks []int
+	}
+	var roots []*root
+	byAbs := map[string]*root{}
+	count := 0
+	for i, t := range tasks {
+		if !t.Watch {
+			continue
+		}
+		dir := t.Dir
+		if dir == "" {
+			dir = "."
+		}
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			continue
+		}
+		r, ok := byAbs[abs]
+		if !ok {
+			r = &root{abs: abs}
+			byAbs[abs] = r
+			roots = append(roots, r)
+			count += watchTree(watcher, dir, ignore)
+		}
+		r.tasks = append(r.tasks, i)
+	}
+
+	changes := make(chan []int, 1)
+	go func() {
+		defer watcher.Close()
+		pending := map[int]bool{}
+		var timer *time.Timer
+		var timerC <-chan time.Time
+		bump := func() {
+			if timer == nil {
+				timer = time.NewTimer(watchDebounce)
+				timerC = timer.C
+			} else {
+				timer.Reset(watchDebounce)
+			}
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if ev.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) == 0 {
+					continue
+				}
+				if underPath(ev.Name, ignore) {
+					continue
+				}
+				// Watch directories created while running
+				if ev.Op&fsnotify.Create != 0 {
+					if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
+						watchTree(watcher, ev.Name, ignore)
+					}
+				}
+				matched := false
+				for _, r := range roots {
+					if underPath(ev.Name, r.abs) {
+						for _, i := range r.tasks {
+							pending[i] = true
+						}
+						matched = true
+					}
+				}
+				if matched {
+					bump()
+				}
+			case <-timerC:
+				timer, timerC = nil, nil
+				idxs := make([]int, 0, len(pending))
+				for i := range pending {
+					idxs = append(idxs, i)
+				}
+				sort.Ints(idxs)
+				select {
+				case changes <- idxs:
+					pending = map[int]bool{}
+				default:
+					// The receiver is behind; keep pending and retry shortly
+					bump()
+				}
+			case _, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+			}
+		}
+	}()
+	return changes, count, nil
 }
 
 // watchRoots returns the unique directories of every task in the run.

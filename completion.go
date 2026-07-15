@@ -3,9 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 )
 
-var builtinCommands = []string{"init", "sync", "list", "check", "exec", "completion", "help", "version"}
+var builtinCommands = []string{"init", "sync", "list", "check", "doctor", "exec", "completion", "help", "version"}
 
 const bashCompletion = `_bnm_completions() {
   local cur=${COMP_WORDS[COMP_CWORD]}
@@ -67,7 +68,12 @@ func completionCandidates(what string, config *Config, configErr error) []string
 	case "commands":
 		candidates := append([]string(nil), builtinCommands...)
 		if configErr == nil {
-			candidates = append(candidates, sortedKeys(config.Scripts)...)
+			for _, script := range sortedKeys(config.Scripts) {
+				// A script overriding a builtin ("check") is already listed
+				if !slices.Contains(builtinCommands, script) {
+					candidates = append(candidates, script)
+				}
+			}
 		}
 		return candidates
 	case "scripts":

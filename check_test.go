@@ -101,6 +101,108 @@ func TestCheckConfigAliasKeyCollision(t *testing.T) {
 	}
 }
 
+func TestHasCheckScript(t *testing.T) {
+	// A "check" script routes "bnm check" to the script runner
+	writeConfig(t, `{"scripts": {"check": {"frontend": "echo hi"}}}`)
+	if !hasCheckScript() {
+		t.Error("expected true when a check script is defined")
+	}
+
+	// No check script, a broken config, and a missing config all fall
+	// through to the validator
+	writeConfig(t, `{"scripts": {"dev": {"frontend": "echo hi"}}}`)
+	if hasCheckScript() {
+		t.Error("expected false without a check script")
+	}
+	writeConfig(t, `{broken`)
+	if hasCheckScript() {
+		t.Error("expected false for a broken config")
+	}
+	t.Chdir(t.TempDir())
+	if hasCheckScript() {
+		t.Error("expected false for a missing config")
+	}
+}
+
+func TestCheckConfigNamedTasks(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.Mkdir(filepath.Join(dir, "frontend"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := &Config{
+		Directories: map[string]Directory{
+			"FRONTEND": {Alias: "F", Path: "./frontend"},
+		},
+		Scripts: map[string]ScriptGroup{
+			"check": {Tasks: []Task{
+				// A name differing from the dir is fine, and the dir may be
+				// a key, an alias, or a path
+				{Name: "lint", Dir: "FRONTEND", Command: "echo lint"},
+				{Name: "typecheck", Dir: "F", Command: "echo typecheck"},
+				{Name: "test", Dir: "./frontend", Command: "echo test"},
+			}},
+		},
+	}
+	if problems := checkConfig(config); len(problems) != 0 {
+		t.Errorf("expected no problems, got %v", problems)
+	}
+}
+
+func TestCheckConfigDuplicateTaskName(t *testing.T) {
+	t.Chdir(t.TempDir())
+	config := &Config{
+		Scripts: map[string]ScriptGroup{
+			"check": {Tasks: []Task{
+				{Name: "lint", Command: "echo 1"},
+				{Name: "lint", Command: "echo 2"},
+			}},
+		},
+	}
+	problems := checkConfig(config)
+	if len(problems) != 1 || !strings.Contains(problems[0], "share the name 'lint'") {
+		t.Errorf("got %v, want duplicate task name problem", problems)
+	}
+
+	// Names differing only in case are also duplicates: task filters match
+	// case-insensitively, so --task would select both
+	config.Scripts["check"] = ScriptGroup{Tasks: []Task{
+		{Name: "Lint", Command: "echo 1"},
+		{Name: "lint", Command: "echo 2"},
+	}}
+	problems = checkConfig(config)
+	if len(problems) != 1 || !strings.Contains(problems[0], "share a name up to case") {
+		t.Errorf("case-only duplicate: got %v", problems)
+	}
+
+	// Unnamed legacy tasks may share a directory without complaint
+	config.Scripts["check"] = ScriptGroup{Tasks: []Task{
+		{Command: "echo 1"},
+		{Command: "echo 2"},
+	}}
+	if problems := checkConfig(config); len(problems) != 0 {
+		t.Errorf("legacy tasks: got %v, want none", problems)
+	}
+}
+
+func TestCheckConfigAliasDirResolves(t *testing.T) {
+	t.Chdir(t.TempDir())
+	config := &Config{
+		Directories: map[string]Directory{
+			"FRONTEND": {Alias: "F", Path: "./frontend"},
+		},
+		Scripts: map[string]ScriptGroup{
+			"dev": {Tasks: []Task{{Name: "lint", Dir: "F", Command: "echo hi"}}},
+		},
+	}
+	// ./frontend does not exist: both the directory entry and the task's
+	// alias-resolved dir must be reported
+	problems := checkConfig(config)
+	if len(problems) != 2 {
+		t.Errorf("got %v, want 2 problems", problems)
+	}
+}
+
 func TestCheckConfigTaskProblems(t *testing.T) {
 	t.Chdir(t.TempDir())
 	config := &Config{

@@ -13,7 +13,8 @@ func printUsage() {
 	fmt.Println("  init                         : Initialize (Creates bnm.json; see 'init --yes/--force/--dry-run/--include/--exclude')")
 	fmt.Println("  sync                         : Sync directories in bnm.json with current subdirectories")
 	fmt.Println("  list                         : List directories and scripts defined in bnm.json")
-	fmt.Println("  check                        : Validate bnm.json (paths, aliases, commands, dependencies)")
+	fmt.Println("  doctor                       : Validate bnm.json (paths, aliases, commands, dependencies)")
+	fmt.Println("  check                        : Same as doctor, unless a \"check\" script is defined — then it runs that script")
 	fmt.Println("  exec <dir or alias> <cmd...> : Execute a command in target (use '.' for current directory)")
 	fmt.Println("  exec --all <cmd...>          : Execute a command in every configured directory")
 	fmt.Println("  completion <bash|zsh|fish>   : Print a shell completion script")
@@ -22,7 +23,9 @@ func printUsage() {
 	fmt.Println("Script options:")
 	fmt.Println("  <script> frontend backend    : Run only tasks in the given directories (name, alias, or path)")
 	fmt.Println("  <script> --filter frontend   : Same as above; -F is the short form and can repeat")
+	fmt.Println("  <script> --task lint         : Run only the task with this name; -T is the short form and can repeat")
 	fmt.Println("  <script> --watch             : Rerun the script when files in task directories change")
+	fmt.Println("  <script> --no-watch          : Run once, overriding \"watch\": true in bnm.json")
 	fmt.Println("  <script> --dry-run           : Show the execution plan without running anything")
 	fmt.Println("  <script> --log-dir DIR       : Also write each task's output to DIR/<script>/<task>.log")
 	fmt.Println("  <script> --summary json      : Print the run summary as JSON")
@@ -59,8 +62,14 @@ func main() {
 	case "list", "ls":
 		runList()
 
-	case "check":
+	case "doctor":
 		runCheck()
+
+	case "check":
+		// Historically the validator; a config that defines a "check"
+		// script gets the script instead (the validator stays reachable
+		// as "bnm doctor").
+		runCheckCommand(os.Args[2:])
 
 	case "exec":
 		if len(os.Args) >= 4 && os.Args[2] == "--all" {
@@ -108,11 +117,16 @@ func main() {
 func splitScriptArgs(args []string) (filters []string, extraArgs []string, opts scriptOptions, err error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if a == "--" {
+			extraArgs = args[i+1:]
+			break
+		}
 		switch a {
-		case "--":
-			return filters, args[i+1:], opts, nil
 		case "--watch", "-w":
 			opts.Watch = true
+			continue
+		case "--no-watch":
+			opts.NoWatch = true
 			continue
 		case "--dry-run", "-n":
 			opts.DryRun = true
@@ -139,6 +153,12 @@ func splitScriptArgs(args []string) (filters []string, extraArgs []string, opts 
 				return nil, nil, opts, err
 			}
 			filters = append(filters, v)
+		case "--task", "-T":
+			v, err := takeValue()
+			if err != nil {
+				return nil, nil, opts, err
+			}
+			opts.TaskFilters = append(opts.TaskFilters, v)
 		case "--log-dir":
 			if opts.LogDir, err = takeValue(); err != nil {
 				return nil, nil, opts, err
@@ -156,5 +176,8 @@ func splitScriptArgs(args []string) (filters []string, extraArgs []string, opts 
 			filters = append(filters, a)
 		}
 	}
-	return filters, nil, opts, nil
+	if opts.Watch && opts.NoWatch {
+		return nil, nil, opts, fmt.Errorf("--watch and --no-watch cannot be combined")
+	}
+	return filters, extraArgs, opts, nil
 }

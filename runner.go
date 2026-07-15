@@ -19,6 +19,7 @@ import (
 
 type taskResult struct {
 	Name     string
+	Dir      string
 	Status   string
 	Duration time.Duration
 }
@@ -31,11 +32,23 @@ const (
 )
 
 type scriptOptions struct {
-	Watch   bool
-	DryRun  bool
-	NoColor bool
-	LogDir  string
-	Summary string // "" or "text" for the table, "json" for machine-readable output
+	Watch       bool // --watch; forces watch mode on
+	NoWatch     bool // --no-watch; overrides a "watch": true in the config
+	DryRun      bool
+	NoColor     bool
+	LogDir      string
+	Summary     string   // "" or "text" for the table, "json" for machine-readable output
+	TaskFilters []string // task names from --task / -T; empty means all tasks
+}
+
+// watchEnabled reports whether the run should watch: the target script's
+// config default, overridden by --watch / --no-watch. Watch settings on
+// dependency scripts are ignored.
+func watchEnabled(group ScriptGroup, opts scriptOptions) bool {
+	if opts.NoWatch {
+		return false
+	}
+	return opts.Watch || group.Watch
 }
 
 func runScript(targetScript string, filters []string, extraArgs []string, opts scriptOptions) {
@@ -60,8 +73,12 @@ func runScript(targetScript string, filters []string, extraArgs []string, opts s
 	for _, name := range order {
 		tasks := config.Scripts[name].Tasks
 		if name == targetScript {
+			all := tasks
 			var err error
 			tasks, err = filterTasks(config, tasks, filters)
+			if err == nil {
+				tasks, err = filterTasksByTaskName(config, tasks, all, opts.TaskFilters, targetScript)
+			}
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
@@ -111,10 +128,21 @@ func runScript(targetScript string, filters []string, extraArgs []string, opts s
 
 	sharedEnv := buildEnv(config)
 
-	if opts.Watch {
+	if watchEnabled(config.Scripts[targetScript], opts) {
 		runScriptWatch(ctx, config, order, tasksByScript, targetScript, sharedEnv, opts)
 		if interrupted.Load() {
 			os.Exit(130)
+		}
+		return
+	}
+
+	if !opts.NoWatch && anyTaskWatch(tasksByScript[targetScript]) {
+		failed := runScriptTaskWatch(ctx, config, order, tasksByScript, targetScript, sharedEnv, opts)
+		if interrupted.Load() {
+			os.Exit(130)
+		}
+		if failed {
+			os.Exit(1)
 		}
 		return
 	}
@@ -194,6 +222,146 @@ func sanitizeLogName(name string) string {
 	return s
 }
 
+// anyTaskWatch reports whether any task carries "watch": true.
+func anyTaskWatch(tasks []Task) bool {
+	for _, t := range tasks {
+		if t.Watch {
+			return true
+		}
+	}
+	return false
+}
+
+// runScriptTaskWatch runs the target script with its tasks marked
+// "watch": true under supervision: when files in such a task's directory
+// change, only that task is stopped and rerun; everything else keeps
+// running. Dependencies run once up front. It returns when ctx is canceled
+// (Ctrl+C) and reports whether a dependency failed.
+func runScriptTaskWatch(ctx context.Context, config *Config, order []string, tasksByScript map[string][]Task, targetScript string, sharedEnv []string, opts scriptOptions) bool {
+	for _, name := range order {
+		if name == targetScript {
+			break
+		}
+		group := config.Scripts[name]
+		mode := group.Mode
+		if mode == "" {
+			mode = "parallel"
+		}
+		fmt.Printf("[bnm] Running dependency '%s' (Mode: %s)...\n", name, mode)
+		if _, ok := runGroup(ctx, mode, group.MaxParallel, tasksByScript[name], sharedEnv); !ok {
+			if ctx.Err() == nil {
+				fmt.Printf("[bnm] Dependency '%s' failed. Skipping remaining scripts.\n", name)
+			}
+			return ctx.Err() == nil
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+	}
+
+	tasks := tasksByScript[targetScript]
+	// The log directory must not be watched (see runScriptWatch)
+	ignore := ""
+	if opts.LogDir != "" {
+		ignore, _ = filepath.Abs(opts.LogDir)
+	}
+	changes, count, err := watchTaskDirs(ctx, tasks, ignore)
+	if err != nil {
+		fmt.Printf("Error: failed to start file watcher: %v\n", err)
+		os.Exit(1)
+	}
+
+	restarts := make([]chan struct{}, len(tasks))
+	watched := 0
+	for i, t := range tasks {
+		if t.Watch {
+			restarts[i] = make(chan struct{}, 1)
+			watched++
+		}
+	}
+	fmt.Printf("[bnm] Starting script '%s' (Mode: parallel)...\n", targetScript)
+	fmt.Printf("[bnm] Watch mode: watching %d directories for %d task(s). Press Ctrl+C to stop.\n", count, watched)
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case idxs := <-changes:
+				for _, i := range idxs {
+					select {
+					case restarts[i] <- struct{}{}:
+					default: // a restart is already pending
+					}
+				}
+			}
+		}
+	}()
+
+	var sem chan struct{}
+	if mp := config.Scripts[targetScript].MaxParallel; mp > 0 {
+		sem = make(chan struct{}, mp)
+	}
+	var wg sync.WaitGroup
+	for i, t := range tasks {
+		wg.Add(1)
+		go func(t Task, restart <-chan struct{}) {
+			defer wg.Done()
+			superviseTask(ctx, t, sharedEnv, sem, restart)
+		}(t, restarts[i])
+	}
+	wg.Wait()
+	return false
+}
+
+// superviseTask runs a task and, when restart is non-nil, keeps it under
+// watch supervision: a restart signal stops the running process (or wakes a
+// finished task) and runs it again. Tasks without a restart channel run
+// once. Returns when ctx is canceled.
+func superviseTask(ctx context.Context, t Task, sharedEnv []string, sem chan struct{}, restart <-chan struct{}) {
+	for {
+		if sem != nil {
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		attemptCtx, cancel := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() {
+			// The task directory's .env is reread on every restart
+			done <- runTaskAttempts(attemptCtx, t, taskEnv(sharedEnv, t))
+		}()
+
+		restarted := false
+		select {
+		case <-done:
+		case <-restart:
+			restarted = true
+			fmt.Printf("[bnm] Task '%s' changed. Restarting...\n", t.Name)
+			cancel()
+			<-done
+		}
+		cancel()
+		if sem != nil {
+			<-sem
+		}
+		if ctx.Err() != nil || restart == nil {
+			return
+		}
+		if !restarted {
+			// The task exited on its own; wait for the next change
+			select {
+			case <-restart:
+				fmt.Printf("[bnm] Task '%s' changed. Restarting...\n", t.Name)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+}
+
 // runScriptOnce runs the resolved scripts in order and prints the summary.
 // It reports whether any task failed.
 func runScriptOnce(ctx context.Context, config *Config, order []string, tasksByScript map[string][]Task, targetScript string, sharedEnv []string, opts scriptOptions) bool {
@@ -221,7 +389,7 @@ func runScriptOnce(ctx context.Context, config *Config, order []string, tasksByS
 			}
 			for _, rest := range order[i+1:] {
 				for _, t := range tasksByScript[rest] {
-					results = append(results, taskResult{Name: t.Name, Status: statusSkipped})
+					results = append(results, taskResult{Name: t.Name, Dir: t.DirLabel, Status: statusSkipped})
 				}
 			}
 			break
@@ -244,6 +412,7 @@ func runScriptOnce(ctx context.Context, config *Config, order []string, tasksByS
 func summaryJSON(script string, results []taskResult, failed bool) []byte {
 	type jsonTask struct {
 		Name       string `json:"name"`
+		Dir        string `json:"dir,omitempty"`
 		Status     string `json:"status"`
 		DurationMs int64  `json:"durationMs"`
 	}
@@ -255,6 +424,7 @@ func summaryJSON(script string, results []taskResult, failed bool) []byte {
 	for _, r := range results {
 		out.Tasks = append(out.Tasks, jsonTask{
 			Name:       r.Name,
+			Dir:        r.Dir,
 			Status:     r.Status,
 			DurationMs: r.Duration.Milliseconds(),
 		})
@@ -316,22 +486,65 @@ func executionOrder(config *Config, target string) []string {
 	return order
 }
 
-// resolveTask fills in the display name and turns a directory key into its
-// configured path.
+// resolveTask fills in the display name for tasks that don't carry one
+// (the legacy array form and internally built tasks) and turns the task's
+// directory — a directories key, an alias, or a path — into the actual path.
+// An explicit Name from the config is never regenerated here.
 func resolveTask(t *Task, config *Config) {
+	t.Name = taskName(*t, config)
+	t.DirLabel = taskDirLabel(*t)
+	t.Dir = resolveDirPath(config, t.Dir)
+}
+
+// taskDirLabel returns the task's directory as written in the config,
+// "." for the project root.
+func taskDirLabel(t Task) string {
 	if t.Dir == "" {
-		t.Dir = "."
-		if config.Name != "" {
-			t.Name = config.Name
-		} else {
-			t.Name = "."
-		}
-	} else if resolvedDir, exists := config.Directories[t.Dir]; exists {
-		t.Name = t.Dir
-		t.Dir = resolvedDir.Path
-	} else {
-		t.Name = t.Dir
+		return "."
 	}
+	return t.Dir
+}
+
+// taskName returns the name a task runs and reports under: the explicit
+// name from the config, or the legacy directory-derived fallback.
+func taskName(t Task, config *Config) string {
+	if t.Name != "" {
+		return t.Name
+	}
+	if t.Dir == "" {
+		if config.Name != "" {
+			return config.Name
+		}
+		return "."
+	}
+	return t.Dir
+}
+
+// resolveDirEntry maps a task directory written as a directories key or an
+// alias to the entry it refers to, returning the formal key. Keys take
+// priority over aliases, matching the priority of filters and bnm exec.
+func resolveDirEntry(config *Config, dir string) (string, Directory, bool) {
+	if d, exists := config.Directories[dir]; exists {
+		return dir, d, true
+	}
+	for _, key := range sortedKeys(config.Directories) {
+		if d := config.Directories[key]; d.Alias != "" && strings.EqualFold(d.Alias, dir) {
+			return key, d, true
+		}
+	}
+	return "", Directory{}, false
+}
+
+// resolveDirPath maps a task directory — a directories key, an alias, or a
+// path — to the path commands run in.
+func resolveDirPath(config *Config, dir string) string {
+	if dir == "" {
+		return "."
+	}
+	if _, d, ok := resolveDirEntry(config, dir); ok {
+		return d.Path
+	}
+	return dir
 }
 
 // filterTasks returns the tasks matching any of the given directory filters.
@@ -372,26 +585,76 @@ func filterTasks(config *Config, tasks []Task, filters []string) ([]Task, error)
 	return matched, nil
 }
 
-// taskMatchesName reports whether the filter equals the task's directory
-// key or path.
+// taskMatchesName reports whether the filter equals the task's directory as
+// written, the directory's formal key (also when the task refers to it by
+// alias), or its path.
 func taskMatchesName(config *Config, task Task, filter string) bool {
-	dirKey := task.Dir
-	dirPath := task.Dir
-	if d, exists := config.Directories[task.Dir]; exists {
+	dirRaw := task.Dir
+	if dirRaw == "" {
+		dirRaw = "."
+	}
+	if strings.EqualFold(dirRaw, filter) {
+		return true
+	}
+	dirPath := dirRaw
+	if key, d, ok := resolveDirEntry(config, task.Dir); ok {
+		if strings.EqualFold(key, filter) {
+			return true
+		}
 		dirPath = d.Path
 	}
-	if dirKey == "" {
-		dirKey, dirPath = ".", "."
-	}
 	clean := func(s string) string { return strings.TrimPrefix(s, "./") }
-	return strings.EqualFold(dirKey, filter) || strings.EqualFold(clean(dirPath), clean(filter))
+	return strings.EqualFold(clean(dirPath), clean(filter))
 }
 
-// taskMatchesAlias reports whether the filter equals the task directory's
-// configured alias.
+// filterTasksByTaskName returns the tasks whose name equals any of the given
+// task filters (--task / -T). It runs after the directory filters, so the
+// two are an AND condition. all is the script's unfiltered task list, used
+// to tell a nonexistent name apart from one excluded by a directory filter.
+func filterTasksByTaskName(config *Config, tasks, all []Task, names []string, script string) ([]Task, error) {
+	if len(names) == 0 {
+		return tasks, nil
+	}
+	include := make([]bool, len(tasks))
+	for _, n := range names {
+		matchedAny := false
+		for i, task := range tasks {
+			if strings.EqualFold(taskName(task, config), n) {
+				include[i] = true
+				matchedAny = true
+			}
+		}
+		if matchedAny {
+			continue
+		}
+		candidates := make([]string, 0, len(all))
+		for _, task := range all {
+			name := taskName(task, config)
+			if strings.EqualFold(name, n) {
+				return nil, fmt.Errorf("task '%s' in script '%s' does not match the directory filter", n, script)
+			}
+			candidates = append(candidates, name)
+		}
+		msg := fmt.Sprintf("no task named '%s' exists in script '%s'", n, script)
+		if s := closestMatch(n, candidates); s != "" {
+			msg += fmt.Sprintf("\nDid you mean '%s'?", s)
+		}
+		return nil, fmt.Errorf("%s", msg)
+	}
+	var matched []Task
+	for i, task := range tasks {
+		if include[i] {
+			matched = append(matched, task)
+		}
+	}
+	return matched, nil
+}
+
+// taskMatchesAlias reports whether the filter equals the alias of the
+// directory the task refers to (by key or by alias).
 func taskMatchesAlias(config *Config, task Task, filter string) bool {
-	d, exists := config.Directories[task.Dir]
-	return exists && d.Alias != "" && strings.EqualFold(d.Alias, filter)
+	_, d, ok := resolveDirEntry(config, task.Dir)
+	return ok && d.Alias != "" && strings.EqualFold(d.Alias, filter)
 }
 
 // runGroup runs one script group and reports per-task results plus overall
@@ -399,7 +662,7 @@ func taskMatchesAlias(config *Config, task Task, filter string) bool {
 func runGroup(ctx context.Context, mode string, maxParallel int, tasks []Task, sharedEnv []string) ([]taskResult, bool) {
 	results := make([]taskResult, len(tasks))
 	for i, t := range tasks {
-		results[i] = taskResult{Name: t.Name, Status: statusSkipped}
+		results[i] = taskResult{Name: t.Name, Dir: t.DirLabel, Status: statusSkipped}
 	}
 
 	runOne := func(i int, t Task) bool {
@@ -554,6 +817,11 @@ func printSummary(results []taskResult) {
 	if len(results) <= 1 {
 		return
 	}
+	nameWidth, dirWidth := 12, 0
+	for _, r := range results {
+		nameWidth = max(nameWidth, len(r.Name))
+		dirWidth = max(dirWidth, len(r.Dir))
+	}
 	fmt.Println("[bnm] Summary:")
 	for _, r := range results {
 		mark, color := summaryMark(r.Status)
@@ -561,7 +829,11 @@ func printSummary(results []taskResult) {
 		if color != "" {
 			reset = colorReset
 		}
-		line := fmt.Sprintf("  %s%s %-12s %-9s%s", color, mark, r.Name, r.Status, reset)
+		dir := ""
+		if dirWidth > 0 {
+			dir = fmt.Sprintf("%-*s ", dirWidth, r.Dir)
+		}
+		line := fmt.Sprintf("  %s%s %-*s %s%-9s%s", color, mark, nameWidth, r.Name, dir, r.Status, reset)
 		if r.Status == statusOK || r.Status == statusFailed {
 			line += " " + formatDuration(r.Duration)
 		}

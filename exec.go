@@ -94,10 +94,7 @@ func resolveExecTarget(config *Config, query string) (name, dir string, found bo
 	// Fall back to directories referenced only by script tasks
 	for _, scriptGroup := range config.Scripts {
 		for _, task := range scriptGroup.Tasks {
-			actualDir := task.Dir
-			if mappedDir, exists := config.Directories[task.Dir]; exists {
-				actualDir = mappedDir.Path
-			}
+			actualDir := resolveDirPath(config, task.Dir)
 			if strings.EqualFold(strings.TrimPrefix(actualDir, "./"), cleanQuery) {
 				return task.Dir, actualDir, true
 			}
